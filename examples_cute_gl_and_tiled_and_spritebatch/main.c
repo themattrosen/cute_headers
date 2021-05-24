@@ -10,7 +10,7 @@
 #include <cute_tiled.h>
 
 #define CUTE_GL_IMPLEMENTATION
-#include <cute_gl.h>
+#include "cute_gl.h"
 
 #define CUTE_TIME_IMPLEMENTATION
 #include <cute_time.h>
@@ -323,7 +323,7 @@ void print_objects(cute_tiled_object_t* o)
 		++tab_count;
 		print(o, ellipse, %d);
 		print(o, gid, %d);
-		print(o, height, %d);
+		print(o, height, %f);
 		print(o, id, %d);
 		print(o, name.ptr, %s);
 		print(o, point, %d);
@@ -342,7 +342,7 @@ void print_objects(cute_tiled_object_t* o)
 		print(o, rotation, %f);
 		print(o, type.ptr, %s);
 		print(o, visible, %d);
-		print(o, width, %d);
+		print(o, width, %f);
 		print(o, x, %f);
 		print(o, y, %f);
 
@@ -398,6 +398,27 @@ void print_tilesets(cute_tiled_tileset_t* tileset)
 		print(tileset, tilewidth, %d);
 		print(tileset, type.ptr, %s);
 		print(tileset, source.ptr, %s);
+		print(tileset, objectalignment.ptr, %s);
+
+		cute_tiled_tile_descriptor_t* tile = tileset->tiles;
+		print_category("tiles"); ++tab_count;
+		while (tile) {
+			print(tile, tile_index, %d);
+			print(tile, frame_count, %d);
+			print_category("frame"); ++tab_count;
+			for (int i = 0; i < tile->frame_count; ++i) {
+				cute_tiled_frame_t* frame = tile->animation + i;
+				print(frame, duration, %d);
+				print(frame, tileid, %d);
+			}
+			--tab_count;
+			print_layer(tile->objectgroup);
+			print_properties(tile->properties, tile->property_count);
+			print(tile, probability, %f);
+
+			tile = tile->next;
+		}
+		--tab_count;
 
 		tileset = tileset->next;
 		--tab_count;
@@ -477,8 +498,21 @@ void free_images()
 	}
 }
 
-#define push_sprite(sp) \
-	spritebatch_push(&sb, sp.image_id, 15, 15, sp.x, sp.y, sp.sx, sp.sy, sp.c, sp.s, sp.depth)
+void push_sprite(sprite_t sp)
+{
+	spritebatch_sprite_t s;
+	s.image_id = sp.image_id;
+	s.w = 15;
+	s.h = 15;
+	s.x = sp.x;
+	s.y = sp.y;
+	s.sx = sp.sx;
+	s.sy = sp.sy;
+	s.c = sp.c;
+	s.s = sp.s;
+	s.sort_bits = sp.depth;
+	spritebatch_push(&sb, s);
+}
 
 void scene0()
 {
@@ -617,7 +651,7 @@ int main(int argc, char** argv)
 	CUTE_TILED_UNUSED(argc);
 	CUTE_TILED_UNUSED(argv);
 
-	test_map("test_map.json");
+	//test_map("city.json");
 
 	setup_SDL_and_glad();
 	setup_cute_gl();

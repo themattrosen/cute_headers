@@ -3,7 +3,7 @@
 		Licensing information can be found at the end of the file.
 	------------------------------------------------------------------------------
 
-	cute_tiled.h - v1.03
+	cute_tiled.h - v1.06
 
 	To create implementation (the function definitions)
 		#define CUTE_TILED_IMPLEMENTATION
@@ -17,8 +17,8 @@
 		is loaded up in entirety and used to fill in a set of structs. The entire
 		struct collection is then handed to the user.
 
-		This header is up to date with Tiled's documentation Revision cb92f36d and
-		verified to work with Tiled stable version 1.2.1.
+		This header is up to date with Tiled's documentation Revision 40049fd5 and
+		verified to work with Tiled stable version 1.4.1.
 		http://doc.mapeditor.org/en/latest/reference/json-map-format/
 
 		Here is a past discussion thread on this header:
@@ -29,6 +29,9 @@
 		1.01 (05/04/2018) tile descriptors in tilesets for collision geometry
 		1.02 (05/07/2018) reverse lists for ease of use, incorporate fixes by ZenToad
 		1.03 (01/11/2019) support for Tiled 1.2.1 with the help of dpeter99 and tanis2000
+		1.04 (04/30/2020) support for Tiled 1.3.3 with the help of aganm
+		1.05 (07/19/2020) support for Tiled 1.4.1 and tileset tile animations
+		1.06 (04/05/2021) support for Tiled 1.5.0 parallax
 */
 
 /*
@@ -36,6 +39,7 @@
 		ZenToad           1.02 - Bug reports and goto statement errors for g++
 		dpeter99          1.03 - Help with updating to Tiled 1.2.1 JSON format
 		tanis2000         1.03 - Help with updating to Tiled 1.2.1 JSON format
+		aganm             1.04 - Help with updating to Tiled 1.3.3 JSON format
 */
 
 /*
@@ -77,6 +81,13 @@
 		syntax is encountered (which can happen if cute_tiled is used on a newer
 		and unsupported version of Tiled), undefined behavior may occur (crashes).
 
+		If you would like a certain feature to be supported simply open an issue on
+		GitHub and provide a JSON exported map with the unsupported features. Changing
+		the parser to support new fields and objects is quite easy, as long as a map
+		file is provided for debugging and testing!
+
+		GitHub : https://github.com/RandyGaul/cute_headers/
+
 		Compression of the tile GIDs is *not* supported in this header. Exporting
 		a map from Tiled will create a JSON file. This JSON file itself can very
 		trivially be compressed in its entirety, thus making Tiled's internal
@@ -94,11 +105,14 @@
 
 // Read this in the event of errors
 extern const char* cute_tiled_error_reason;
+extern int cute_tiled_error_line;
+
 
 typedef struct cute_tiled_map_t cute_tiled_map_t;
+typedef struct cute_tiled_tileset_t cute_tiled_tileset_t;
 
 /*!
- * Load a map from disk, placed into heap allocated memory.. \p mem_ctx can be
+ * Load a map from disk, placed into heap allocated memory. \p mem_ctx can be
  * NULL. It is used for custom allocations.
  */
 cute_tiled_map_t* cute_tiled_load_map_from_file(const char* path, void* mem_ctx);
@@ -118,6 +132,30 @@ void cute_tiled_reverse_layers(cute_tiled_map_t* map);
  */
 void cute_tiled_free_map(cute_tiled_map_t* map);
 
+/*!
+ * Load an external tileset from disk, placed into heap allocated memory. \p mem_ctx can be
+ * NULL. It is used for custom allocations.
+ *
+ * Please note this function is *entirely optional*, and only useful if you want to intentionally
+ * load tilesets externally from your map. If so, please also consider defining
+ * `CUTE_TILED_NO_EXTERNAL_TILESET_WARNING` to disable warnings about missing embedded tilesets.
+ */
+cute_tiled_tileset_t* cute_tiled_load_external_tileset(const char* path, void* mem_ctx);
+
+/*!
+ * Load an external tileset from memory. \p mem_ctx can be NULL. It is used for custom allocations.
+ *
+ * Please note this function is *entirely optional*, and only useful if you want to intentionally
+ * load tilesets externally from your map. If so, please also consider defining
+ * `CUTE_TILED_NO_EXTERNAL_TILESET_WARNING` to disable warnings about missing embedded tilesets.
+ */
+cute_tiled_tileset_t* cute_tiled_load_external_tileset_from_memory(const void* memory, int size_in_bytes, void* mem_ctx);
+
+/*!
+ * Free all dynamic memory associated with this external tileset.
+ */
+void cute_tiled_free_external_tileset(cute_tiled_tileset_t* tileset);
+
 #if !defined(CUTE_TILED_U64)
 	#define CUTE_TILED_U64 unsigned long long
 #endif
@@ -132,6 +170,7 @@ void cute_tiled_free_map(cute_tiled_map_t* map);
 
 typedef struct cute_tiled_layer_t cute_tiled_layer_t;
 typedef struct cute_tiled_object_t cute_tiled_object_t;
+typedef struct cute_tiled_frame_t cute_tiled_frame_t;
 typedef struct cute_tiled_tile_descriptor_t cute_tiled_tile_descriptor_t;
 typedef struct cute_tiled_tileset_t cute_tiled_tileset_t;
 typedef struct cute_tiled_property_t cute_tiled_property_t;
@@ -140,7 +179,7 @@ typedef union cute_tiled_string_t cute_tiled_string_t;
 /*!
  * To access a string, simply do: object->name.ptr; this union is needed
  * as a workaround for 32-bit builds where the size of a pointer is only
- * 32 bits. 
+ * 32 bits.
  *
  * More info:
  * This unions is needed to support a single-pass parser, with string
@@ -188,12 +227,12 @@ struct cute_tiled_property_t
 
 struct cute_tiled_object_t
 {
-	int ellipse;                        // 0 or 1. Used to mark an object as an ellipse.
-	int gid;                            // GID, only if object comes from a Tilemap.
-	int height;                         // Height in pixels. Ignored if using a gid.
-	int id;                             // Incremental id - unique across all objects.
-	cute_tiled_string_t name;           // String assigned to name field in editor.
-	int point;                          // 0 or 1. Used to mark an object as a point.
+	int ellipse;                         // 0 or 1. Used to mark an object as an ellipse.
+	int gid;                             // GID, only if object comes from a Tilemap.
+	float height;                        // Height in pixels. Ignored if using a gid.
+	int id;                              // Incremental id - unique across all objects.
+	cute_tiled_string_t name;            // String assigned to name field in editor.
+	int point;                           // 0 or 1. Used to mark an object as a point.
 
 	// Example to index each vert of a polygon/polyline:
 	/*
@@ -205,20 +244,20 @@ struct cute_tiled_object_t
 		}
 	*/
 	int vert_count;
-	float* vertices;                    // Represents both type `polyline` and `polygon`.
-	int vert_type;                      // 1 for `polygon` and 0 for `polyline`.
+	float* vertices;                     // Represents both type `polyline` and `polygon`.
+	int vert_type;                       // 1 for `polygon` and 0 for `polyline`.
 
-	int property_count;                 // Number of elements in the `properties` array.
-	cute_tiled_property_t* properties;  // Array of properties.
-	float rotation;                     // Angle in degrees clockwise.
-	/* template */                      // Not currently supported.
-	/* text */                          // Not currently supported.
-	cute_tiled_string_t type;           // String assigned to type field in editor.
-	int visible;                        // 0 or 1. Whether object is shown in editor.
-	int width;                          // Width in pixels. Ignored if using a gid.
-	float x;                            // x coordinate in pixels.
-	float y;                            // y coordinate in pixels.
-	cute_tiled_object_t* next;          // Pointer to next object. NULL if final object.
+	int property_count;                  // Number of elements in the `properties` array.
+	cute_tiled_property_t* properties;   // Array of properties.
+	float rotation;                      // Angle in degrees clockwise.
+	/* template */                       // Not currently supported.
+	/* text */                           // Not currently supported.
+	cute_tiled_string_t type;            // String assigned to type field in editor.
+	int visible;                         // 0 or 1. Whether object is shown in editor.
+	float width;                         // Width in pixels. Ignored if using a gid.
+	float x;                             // x coordinate in pixels.
+	float y;                             // y coordinate in pixels.
+	cute_tiled_object_t* next;           // Pointer to next object. NULL if final object.
 };
 
 /*!
@@ -244,7 +283,7 @@ struct cute_tiled_object_t
  * Helper for processing tile data in /ref `cute_tiled_layer_t` `data`. Unsets all of
  * the image flipping flags in the higher bit of /p `tile_data_gid`.
  */
-CUTE_TILED_INLINE int cute_tiled_unset_flags(int tile_data_gid)
+static CUTE_TILED_INLINE int cute_tiled_unset_flags(int tile_data_gid)
 {
 	const int flags = ~(CUTE_TILED_FLIPPED_HORIZONTALLY_FLAG | CUTE_TILED_FLIPPED_VERTICALLY_FLAG | CUTE_TILED_FLIPPED_DIAGONALLY_FLAG);
 	return tile_data_gid & flags;
@@ -254,7 +293,7 @@ CUTE_TILED_INLINE int cute_tiled_unset_flags(int tile_data_gid)
  * Helper for processing tile data in /ref `cute_tiled_layer_t` `data`. Flags are
  * stored in the GID array `data` for flipping the image. Retrieves all three flag types.
  */
-CUTE_TILED_INLINE void cute_tiled_get_flags(int tile_data_gid, int* flip_horizontal, int* flip_vertical, int* flip_diagonal)
+static CUTE_TILED_INLINE void cute_tiled_get_flags(int tile_data_gid, int* flip_horizontal, int* flip_vertical, int* flip_diagonal)
 {
 	*flip_horizontal = !!(tile_data_gid & CUTE_TILED_FLIPPED_HORIZONTALLY_FLAG);
 	*flip_vertical = !!(tile_data_gid & CUTE_TILED_FLIPPED_VERTICALLY_FLAG);
@@ -263,95 +302,120 @@ CUTE_TILED_INLINE void cute_tiled_get_flags(int tile_data_gid, int* flip_horizon
 
 struct cute_tiled_layer_t
 {
-	/* chunks */                        // Not currently supported.
-	/* compression; */                  // Not currently supported.
-	int data_count;                     // Number of integers in `data`.
-	int* data;                          // Array of GIDs. `tilelayer` only. Only support CSV style exports.
-	cute_tiled_string_t draworder;      // `topdown` (default) or `index`. `objectgroup` only.
-	/* encoding; */                     // Not currently supported.
-	int height;                         // Row count. Same as map height for fixed-size maps.
-	cute_tiled_layer_t* layers;         // Linked list of layers. Only appears if `type` is `group`.
-	cute_tiled_string_t name;           // Name assigned to this layer.
-	cute_tiled_object_t* objects;       // Linked list of objects. `objectgroup` only.
-	/* offsetx */                       // Not currently supported.
-	/* offsety */                       // Not currently supported.
-	float opacity;                      // Value between 0 and 1.
-	int property_count;                 // Number of elements in the `properties` array.
-	cute_tiled_property_t* properties;  // Array of properties.
-	int transparentcolor;               // Hex-formatted color (#RRGGBB or #AARRGGBB) (optional).
-	cute_tiled_string_t type;           // `tilelayer`, `objectgroup`, `imagelayer` or `group`.
-	int visible;                        // 0 or 1. Whether layer is shown or hidden in editor.
-	int width;                          // Column count. Same as map width for fixed-size maps.
-	int x;                              // Horizontal layer offset in tiles. Always 0.
-	int y;                              // Vertical layer offset in tiles. Always 0.
-	int id;                             // ID of the layer.
-	cute_tiled_layer_t* next;           // Pointer to the next layer. NULL if final layer.
+	/* chunks */                         // Not currently supported.
+	/* compression; */                   // Not currently supported.
+	int data_count;                      // Number of integers in `data`.
+	int* data;                           // Array of GIDs. `tilelayer` only. Only support CSV style exports.
+	cute_tiled_string_t draworder;       // `topdown` (default) or `index`. `objectgroup` only.
+	/* encoding; */                      // Not currently supported.
+	int height;                          // Row count. Same as map height for fixed-size maps.
+	cute_tiled_layer_t* layers;          // Linked list of layers. Only appears if `type` is `group`.
+	cute_tiled_string_t name;            // Name assigned to this layer.
+	cute_tiled_object_t* objects;        // Linked list of objects. `objectgroup` only.
+	float offsetx;                       // Horizontal layer offset.
+	float offsety;                       // Vertical layer offset.
+	float opacity;                       // Value between 0 and 1.
+	int property_count;                  // Number of elements in the `properties` array.
+	cute_tiled_property_t* properties;   // Array of properties.
+	int transparentcolor;                // Hex-formatted color (#RRGGBB or #AARRGGBB) (optional).
+	cute_tiled_string_t type;            // `tilelayer`, `objectgroup`, `imagelayer` or `group`.
+	cute_tiled_string_t image;           // An image filepath. Used if layer is type `imagelayer`.
+	int visible;                         // 0 or 1. Whether layer is shown or hidden in editor.
+	int width;                           // Column count. Same as map width for fixed-size maps.
+	int x;                               // Horizontal layer offset in tiles. Always 0.
+	int y;                               // Vertical layer offset in tiles. Always 0.
+	float parallaxx;                     // X axis parallax factor.
+	float parallaxy;                     // Y axis parallax factor.
+	int id;                              // ID of the layer.
+	cute_tiled_layer_t* next;            // Pointer to the next layer. NULL if final layer.
+};
+
+struct cute_tiled_frame_t
+{
+	int duration;                        // Frame duration in milliseconds.
+	int tileid;                          // Local tile ID representing this frame.
 };
 
 struct cute_tiled_tile_descriptor_t
 {
-	int tile_index;                     // ID of the tile local to the associated tileset.
-	/* animation */                     // Not currently supported.
-	/* image */                         // Not currently supported.
-	/* imageheight */                   // Not currently supported.
-	/* imagewidth */                    // Not currently supported.
-	cute_tiled_layer_t* objectgroup;    // Linked list of layers of type `objectgroup` only. Useful for holding collision info.
-	int property_count;                 // Number of elements in the `properties` array.
-	cute_tiled_property_t* properties;  // Array of properties.
-	/* terrain */                       // Not currently supported.
-	float probability;                  // The probability used when painting with the terrain brush in `Random Mode`.
-	cute_tiled_tile_descriptor_t* next; // Pointer to the next tile descriptor. NULL if final tile descriptor.
+	int tile_index;                      // ID of the tile local to the associated tileset.
+	cute_tiled_string_t type;            // String assigned to type field in editor.
+	int frame_count;                     // The number of animation frames in the `animation` array.
+	cute_tiled_frame_t* animation;       // An array of `cute_tiled_frame_t`'s. Can be NULL.
+	cute_tiled_string_t image;           // Image used for a tile in a tileset of type collection of images (relative path from map file to source image).
+					     // Tileset is a collection of images if image.ptr isn't NULL.
+	int imageheight;                     // Image height of a tile in a tileset of type collection of images.
+	int imagewidth;                      // Image width of a tile in a tileset of type collection of images.
+	cute_tiled_layer_t* objectgroup;     // Linked list of layers of type `objectgroup` only. Useful for holding collision info.
+	int property_count;                  // Number of elements in the `properties` array.
+	cute_tiled_property_t* properties;   // Array of properties.
+	/* terrain */                        // Not currently supported.
+	float probability;                   // The probability used when painting with the terrain brush in `Random Mode`.
+	cute_tiled_tile_descriptor_t* next;  // Pointer to the next tile descriptor. NULL if final tile descriptor.
 };
 
+// IMPORTANT NOTE
+// If your tileset is not embedded you will get a warning -- to disable this warning simply define
+// this macro CUTE_TILED_NO_EXTERNAL_TILESET_WARNING.
+//
+// Here is an example.
+//
+//    #define CUTE_TILED_NO_EXTERNAL_TILESET_WARNING
+//    #define CUTE_TILED_IMPLEMENTATION
+//    #include <cute_tiled.h>
 struct cute_tiled_tileset_t
 {
-	int columns;                        // The number of tile columns in the tileset.
-	int firstgid;                       // GID corresponding to the first tile in the set.
-	/* grid */                          // Not currently supported.
-	cute_tiled_string_t image;          // Image used for tiles in this set (relative path from map file to source image).
-	int imagewidth;                     // Width of source image in pixels.
-	int imageheight;                    // Height of source image in pixels.
-	int margin;                         // Buffer between image edge and first tile (pixels).
-	cute_tiled_string_t name;           // Name given to this tileset.
-	int property_count;                 // Number of elements in the `properties` array.
-	cute_tiled_property_t* properties;  // Array of properties.
-	int spacing;                        // Spacing between adjacent tiles in image (pixels).
-	/* terrains */                      // Not currently supported.
-	int tilecount;                      // The number of tiles in this tileset.
-	int tileheight;                     // Maximum height of tiles in this set.
-	/* tileproperties */                // Not currently supported.
-	/* tilepropertytypes */             // Not currently supported.
-	/* tileoffset */                    // Not currently supported.
-	cute_tiled_tile_descriptor_t* tiles;// Linked list of tile descriptors. Can be NULL.
-	int tilewidth;                      // Maximum width of tiles in this set.
-	int transparentcolor;               // Hex-formatted color (#RRGGBB or #AARRGGBB) (optional).
-	cute_tiled_string_t type;           // `tileset` (for tileset files, since 1.0).
-	cute_tiled_string_t source;         // Relative path to tileset, when saved externally from the map file.
-	cute_tiled_tileset_t* next;         // Pointer to next tileset. NULL if final tileset.
+	int backgroundcolor;                 // Hex-formatted color (#RRGGBB or #AARRGGBB) (optional).
+	int columns;                         // The number of tile columns in the tileset.
+	int firstgid;                        // GID corresponding to the first tile in the set.
+	/* grid */                           // Not currently supported.
+	cute_tiled_string_t image;           // Image used for tiles in this set (relative path from map file to source image).
+	int imagewidth;                      // Width of source image in pixels.
+	int imageheight;                     // Height of source image in pixels.
+	int margin;                          // Buffer between image edge and first tile (pixels).
+	cute_tiled_string_t name;            // Name given to this tileset.
+	cute_tiled_string_t objectalignment; // Alignment to use for tile objects (unspecified (default), topleft, top, topright, left, center, right, bottomleft, bottom or bottomright) (since 1.4).
+	int property_count;                  // Number of elements in the `properties` array.
+	cute_tiled_property_t* properties;   // Array of properties.
+	int spacing;                         // Spacing between adjacent tiles in image (pixels).
+	/* terrains */                       // Not currently supported.
+	int tilecount;                       // The number of tiles in this tileset.
+	cute_tiled_string_t tiledversion;    // The Tiled version used to save the tileset.
+	int tileheight;                      // Maximum height of tiles in this set.
+	int tileoffset_x;                    // Pixel offset to align tiles to the grid.
+	int tileoffset_y;                    // Pixel offset to align tiles to the grid.
+	cute_tiled_tile_descriptor_t* tiles; // Linked list of tile descriptors. Can be NULL.
+	int tilewidth;                       // Maximum width of tiles in this set.
+	int transparentcolor;                // Hex-formatted color (#RRGGBB or #AARRGGBB) (optional).
+	cute_tiled_string_t type;            // `tileset` (for tileset files, since 1.0).
+	cute_tiled_string_t source;          // Relative path to tileset, when saved externally from the map file.
+	cute_tiled_tileset_t* next;          // Pointer to next tileset. NULL if final tileset.
+	float version;                       // The JSON format version (like 1.2).
+	void* _internal;                     // For internal use only. Don't touch.
 };
 
 struct cute_tiled_map_t
 {
-	int backgroundcolor;                // Hex-formatted color (#RRGGBB or #AARRGGBB) (optional).
-	int height;                         // Number of tile rows.
-	/* hexsidelength */                 // Not currently supported.
-	int infinite;                       // Whether the map has infinite dimensions.
-	cute_tiled_layer_t* layers;         // Linked list of layers. Can be NULL.
-	int nextobjectid;                   // Auto-increments for each placed object.
-	cute_tiled_string_t orientation;    // `orthogonal`, `isometric`, `staggered` or `hexagonal`.
-	int property_count;                 // Number of elements in the `properties` array.
-	cute_tiled_property_t* properties;  // Array of properties.
-	cute_tiled_string_t renderorder;    // Rendering direction (orthogonal maps only).
-	/* staggeraxis */                   // Not currently supported.
-	/* staggerindex */                  // Not currently supported.
-	cute_tiled_string_t tiledversion;   // The Tiled version used to save the file.
-	int tileheight;                     // Map grid height.
-	cute_tiled_tileset_t* tilesets;     // Linked list of tilesets.
-	int tilewidth;                      // Map grid width.
-	cute_tiled_string_t type;           // `map` (since 1.0).
-	float version;                      // The JSON format version (like 1.2).
-	int width;                          // Number of tile columns.
-	int nextlayerid;                    // The ID of the following layer.
+	int backgroundcolor;                 // Hex-formatted color (#RRGGBB or #AARRGGBB) (optional).
+	int height;                          // Number of tile rows.
+	/* hexsidelength */                  // Not currently supported.
+	int infinite;                        // Whether the map has infinite dimensions.
+	cute_tiled_layer_t* layers;          // Linked list of layers. Can be NULL.
+	int nextobjectid;                    // Auto-increments for each placed object.
+	cute_tiled_string_t orientation;     // `orthogonal`, `isometric`, `staggered` or `hexagonal`.
+	int property_count;                  // Number of elements in the `properties` array.
+	cute_tiled_property_t* properties;   // Array of properties.
+	cute_tiled_string_t renderorder;     // Rendering direction (orthogonal maps only).
+	/* staggeraxis */                    // Not currently supported.
+	/* staggerindex */                   // Not currently supported.
+	cute_tiled_string_t tiledversion;    // The Tiled version used to save the file.
+	int tileheight;                      // Map grid height.
+	cute_tiled_tileset_t* tilesets;      // Linked list of tilesets.
+	int tilewidth;                       // Map grid width.
+	cute_tiled_string_t type;            // `map` (since 1.0).
+	float version;                       // The JSON format version (like 1.2).
+	int width;                           // Number of tile columns.
+	int nextlayerid;                     // The ID of the following layer.
 };
 
 #define CUTE_TILED_H
@@ -387,7 +451,7 @@ struct cute_tiled_map_t
 #define STRPOOL_EMBEDDED_IMPLEMENTATION
 
 /*
-	begin embedding modified strpool.h 
+	begin embedding modified strpool.h
 */
 
 /*
@@ -500,27 +564,27 @@ struct strpool_embedded_t
 #ifndef STRPOOL_EMBEDDED_MEMSET
     #include <string.h>
     #define STRPOOL_EMBEDDED_MEMSET( ptr, val, cnt ) ( memset( ptr, val, cnt ) )
-#endif 
+#endif
 
 #ifndef STRPOOL_EMBEDDED_MEMCPY
     #include <string.h>
     #define STRPOOL_EMBEDDED_MEMCPY( dst, src, cnt ) ( memcpy( dst, src, cnt ) )
-#endif 
+#endif
 
 #ifndef STRPOOL_EMBEDDED_MEMCMP
     #include <string.h>
     #define STRPOOL_EMBEDDED_MEMCMP( pr1, pr2, cnt ) ( memcmp( pr1, pr2, cnt ) )
-#endif 
+#endif
 
 #ifndef STRPOOL_EMBEDDED_STRNICMP
     #ifdef _WIN32
         #include <string.h>
-        #define STRPOOL_EMBEDDED_STRNICMP( s1, s2, len ) ( strnicmp( s1, s2, len ) )
+        #define STRPOOL_EMBEDDED_STRNICMP( s1, s2, len ) ( _strnicmp( s1, s2, len ) )
     #else
         #include <string.h>
-        #define STRPOOL_EMBEDDED_STRNICMP( s1, s2, len ) ( strncasecmp( s1, s2, len ) )        
+        #define STRPOOL_EMBEDDED_STRNICMP( s1, s2, len ) ( strncasecmp( s1, s2, len ) )
     #endif
-#endif 
+#endif
 
 #ifndef STRPOOL_EMBEDDED_MALLOC
     #include <stdlib.h>
@@ -571,15 +635,15 @@ typedef struct strpool_embedded_internal_free_block_t
     } strpool_embedded_internal_free_block_t;
 
 
-strpool_embedded_config_t const strpool_embedded_default_config = 
-    { 
+strpool_embedded_config_t const strpool_embedded_default_config =
+    {
     /* memctx         = */ 0,
     /* ignore_case    = */ 0,
     /* counter_bits   = */ 32,
     /* index_bits     = */ 32,
-    /* entry_capacity = */ 4096, 
-    /* block_capacity = */ 32, 
-    /* block_size     = */ 256 * 1024, 
+    /* entry_capacity = */ 4096,
+    /* block_capacity = */ 32,
+    /* block_size     = */ 256 * 1024,
     /* min_length     = */ 23,
     };
 
@@ -601,10 +665,10 @@ static STRPOOL_EMBEDDED_U32 strpool_embedded_internal_pow2ceil( STRPOOL_EMBEDDED
 
 static int strpool_embedded_internal_add_block( strpool_embedded_t* pool, int size )
     {
-    if( pool->block_count >= pool->block_capacity ) 
+    if( pool->block_count >= pool->block_capacity )
         {
         pool->block_capacity *= 2;
-        strpool_embedded_internal_block_t* new_blocks = (strpool_embedded_internal_block_t*) STRPOOL_EMBEDDED_MALLOC( pool->memctx, 
+        strpool_embedded_internal_block_t* new_blocks = (strpool_embedded_internal_block_t*) STRPOOL_EMBEDDED_MALLOC( pool->memctx,
             pool->block_capacity * sizeof( *pool->blocks ) );
         STRPOOL_EMBEDDED_ASSERT( new_blocks );
         STRPOOL_EMBEDDED_MEMCPY( new_blocks, pool->blocks, pool->block_count * sizeof( *pool->blocks ) );
@@ -632,37 +696,37 @@ void strpool_embedded_init( strpool_embedded_t* pool, strpool_embedded_config_t 
     pool->counter_mask = ( 1ULL << (STRPOOL_EMBEDDED_U64) config->counter_bits ) - 1;
     pool->index_mask = ( 1ULL << (STRPOOL_EMBEDDED_U64) config->index_bits ) - 1;
 
-    pool->initial_entry_capacity = 
+    pool->initial_entry_capacity =
         (int) strpool_embedded_internal_pow2ceil( config->entry_capacity > 1 ? (STRPOOL_EMBEDDED_U32)config->entry_capacity : 2U );
-    pool->initial_block_capacity = 
+    pool->initial_block_capacity =
         (int) strpool_embedded_internal_pow2ceil( config->block_capacity > 1 ? (STRPOOL_EMBEDDED_U32)config->block_capacity : 2U );
-    pool->block_size = 
+    pool->block_size =
         (int) strpool_embedded_internal_pow2ceil( config->block_size > 256 ? (STRPOOL_EMBEDDED_U32)config->block_size : 256U );
-    pool->min_data_size = 
+    pool->min_data_size =
         (int) ( sizeof( int ) * 2 + 1 + ( config->min_length > 8 ? (STRPOOL_EMBEDDED_U32)config->min_length : 8U ) );
 
     pool->hash_capacity = pool->initial_entry_capacity * 2;
     pool->entry_capacity = pool->initial_entry_capacity;
     pool->handle_capacity = pool->initial_entry_capacity;
-    pool->block_capacity = pool->initial_block_capacity;    
+    pool->block_capacity = pool->initial_block_capacity;
 
     pool->handle_freelist_head = -1;
     pool->handle_freelist_tail = -1;
     pool->block_count = 0;
     pool->handle_count = 0;
     pool->entry_count = 0;
-    
-    pool->hash_table = (strpool_embedded_internal_hash_slot_t*) STRPOOL_EMBEDDED_MALLOC( pool->memctx, 
+
+    pool->hash_table = (strpool_embedded_internal_hash_slot_t*) STRPOOL_EMBEDDED_MALLOC( pool->memctx,
         pool->hash_capacity * sizeof( *pool->hash_table ) );
     STRPOOL_EMBEDDED_ASSERT( pool->hash_table );
     STRPOOL_EMBEDDED_MEMSET( pool->hash_table, 0, pool->hash_capacity * sizeof( *pool->hash_table ) );
-    pool->entries = (strpool_embedded_internal_entry_t*) STRPOOL_EMBEDDED_MALLOC( pool->memctx, 
+    pool->entries = (strpool_embedded_internal_entry_t*) STRPOOL_EMBEDDED_MALLOC( pool->memctx,
         pool->entry_capacity * sizeof( *pool->entries ) );
     STRPOOL_EMBEDDED_ASSERT( pool->entries );
-    pool->handles = (strpool_embedded_internal_handle_t*) STRPOOL_EMBEDDED_MALLOC( pool->memctx, 
+    pool->handles = (strpool_embedded_internal_handle_t*) STRPOOL_EMBEDDED_MALLOC( pool->memctx,
         pool->handle_capacity * sizeof( *pool->handles ) );
     STRPOOL_EMBEDDED_ASSERT( pool->handles );
-    pool->blocks = (strpool_embedded_internal_block_t*) STRPOOL_EMBEDDED_MALLOC( pool->memctx, 
+    pool->blocks = (strpool_embedded_internal_block_t*) STRPOOL_EMBEDDED_MALLOC( pool->memctx,
         pool->block_capacity * sizeof( *pool->blocks ) );
     STRPOOL_EMBEDDED_ASSERT( pool->blocks );
 
@@ -713,14 +777,14 @@ void strpool_embedded_term( strpool_embedded_t* pool )
 #endif
 
     for( int i = 0; i < pool->block_count; ++i ) STRPOOL_EMBEDDED_FREE( pool->memctx, pool->blocks[ i ].data );
-    STRPOOL_EMBEDDED_FREE( pool->memctx, pool->blocks );         
-    STRPOOL_EMBEDDED_FREE( pool->memctx, pool->handles );            
-    STRPOOL_EMBEDDED_FREE( pool->memctx, pool->entries );            
-    STRPOOL_EMBEDDED_FREE( pool->memctx, pool->hash_table );         
+    STRPOOL_EMBEDDED_FREE( pool->memctx, pool->blocks );
+    STRPOOL_EMBEDDED_FREE( pool->memctx, pool->handles );
+    STRPOOL_EMBEDDED_FREE( pool->memctx, pool->entries );
+    STRPOOL_EMBEDDED_FREE( pool->memctx, pool->hash_table );
     }
 
 
-static STRPOOL_EMBEDDED_U64 strpool_embedded_internal_make_handle( int index, int counter, STRPOOL_EMBEDDED_U64 index_mask, int counter_shift, 
+static STRPOOL_EMBEDDED_U64 strpool_embedded_internal_make_handle( int index, int counter, STRPOOL_EMBEDDED_U64 index_mask, int counter_shift,
     STRPOOL_EMBEDDED_U64 counter_mask )
     {
     STRPOOL_EMBEDDED_U64 i = (STRPOOL_EMBEDDED_U64) ( index + 1 );
@@ -733,7 +797,7 @@ static int strpool_embedded_internal_counter_from_handle( STRPOOL_EMBEDDED_U64 h
     {
     return (int) ( ( handle >> counter_shift ) & counter_mask ) ;
     }
-    
+
 
 static int strpool_embedded_internal_index_from_handle( STRPOOL_EMBEDDED_U64 handle, STRPOOL_EMBEDDED_U64 index_mask )
     {
@@ -746,7 +810,7 @@ static strpool_embedded_internal_entry_t* strpool_embedded_internal_get_entry( s
     int index = strpool_embedded_internal_index_from_handle( handle, pool->index_mask );
     int counter = strpool_embedded_internal_counter_from_handle( handle, pool->counter_shift, pool->counter_mask );
 
-    if( index >= 0 && index < pool->handle_count && 
+    if( index >= 0 && index < pool->handle_count &&
         counter == (int) ( pool->handles[ index ].counter & pool->counter_mask ) )
             return &pool->entries[ pool->handles[ index ].entry_index ];
 
@@ -760,7 +824,7 @@ static STRPOOL_EMBEDDED_U32 strpool_embedded_internal_find_in_blocks( strpool_em
         {
         strpool_embedded_internal_block_t* block = &pool->blocks[ i ];
         // Check if string comes from pool
-        if( string >= block->data + 2 * sizeof( STRPOOL_EMBEDDED_U32 ) && string < block->data + block->capacity ) 
+        if( string >= block->data + 2 * sizeof( STRPOOL_EMBEDDED_U32 ) && string < block->data + block->capacity )
             {
             STRPOOL_EMBEDDED_U32* ptr = (STRPOOL_EMBEDDED_U32*) string;
             int stored_length = (int)( *( ptr - 1 ) ); // Length is stored immediately before string
@@ -776,9 +840,9 @@ static STRPOOL_EMBEDDED_U32 strpool_embedded_internal_find_in_blocks( strpool_em
 
 static STRPOOL_EMBEDDED_U32 strpool_embedded_internal_calculate_hash( char const* string, int length, int ignore_case )
     {
-    STRPOOL_EMBEDDED_U32 hash = 5381U; 
+    STRPOOL_EMBEDDED_U32 hash = 5381U;
 
-    if( ignore_case) 
+    if( ignore_case)
         {
         for( int i = 0; i < length; ++i )
             {
@@ -808,7 +872,7 @@ static void strpool_embedded_internal_expand_hash_table( strpool_embedded_t* poo
 
     pool->hash_capacity *= 2;
 
-    pool->hash_table = (strpool_embedded_internal_hash_slot_t*) STRPOOL_EMBEDDED_MALLOC( pool->memctx, 
+    pool->hash_table = (strpool_embedded_internal_hash_slot_t*) STRPOOL_EMBEDDED_MALLOC( pool->memctx,
         pool->hash_capacity * sizeof( *pool->hash_table ) );
     STRPOOL_EMBEDDED_ASSERT( pool->hash_table );
     STRPOOL_EMBEDDED_MEMSET( pool->hash_table, 0, pool->hash_capacity * sizeof( *pool->hash_table ) );
@@ -824,10 +888,10 @@ static void strpool_embedded_internal_expand_hash_table( strpool_embedded_t* poo
                 slot = ( slot + 1 ) & ( pool->hash_capacity - 1 );
             STRPOOL_EMBEDDED_ASSERT( hash_key );
             pool->hash_table[ slot ].hash_key = hash_key;
-            pool->hash_table[ slot ].entry_index = old_table[ i ].entry_index;  
-            pool->entries[ pool->hash_table[ slot ].entry_index ].hash_slot = slot; 
+            pool->hash_table[ slot ].entry_index = old_table[ i ].entry_index;
+            pool->entries[ pool->hash_table[ slot ].entry_index ].hash_slot = slot;
             ++pool->hash_table[ base_slot ].base_count;
-            }               
+            }
         }
 
     STRPOOL_EMBEDDED_FREE( pool->memctx, old_table );
@@ -837,19 +901,19 @@ static void strpool_embedded_internal_expand_hash_table( strpool_embedded_t* poo
 static void strpool_embedded_internal_expand_entries( strpool_embedded_t* pool )
     {
     pool->entry_capacity *= 2;
-    strpool_embedded_internal_entry_t* new_entries = (strpool_embedded_internal_entry_t*) STRPOOL_EMBEDDED_MALLOC( pool->memctx, 
+    strpool_embedded_internal_entry_t* new_entries = (strpool_embedded_internal_entry_t*) STRPOOL_EMBEDDED_MALLOC( pool->memctx,
         pool->entry_capacity * sizeof( *pool->entries ) );
     STRPOOL_EMBEDDED_ASSERT( new_entries );
     STRPOOL_EMBEDDED_MEMCPY( new_entries, pool->entries, pool->entry_count * sizeof( *pool->entries ) );
     STRPOOL_EMBEDDED_FREE( pool->memctx, pool->entries );
-    pool->entries = new_entries;    
+    pool->entries = new_entries;
     }
 
 
 static void strpool_embedded_internal_expand_handles( strpool_embedded_t* pool )
     {
     pool->handle_capacity *= 2;
-    strpool_embedded_internal_handle_t* new_handles = (strpool_embedded_internal_handle_t*) STRPOOL_EMBEDDED_MALLOC( pool->memctx, 
+    strpool_embedded_internal_handle_t* new_handles = (strpool_embedded_internal_handle_t*) STRPOOL_EMBEDDED_MALLOC( pool->memctx,
         pool->handle_capacity * sizeof( *pool->handles ) );
     STRPOOL_EMBEDDED_ASSERT( new_handles );
     STRPOOL_EMBEDDED_MEMCPY( new_handles, pool->handles, pool->handle_count * sizeof( *pool->handles ) );
@@ -863,7 +927,7 @@ static char* strpool_embedded_internal_get_data_storage( strpool_embedded_t* poo
     if( size < (int)sizeof( strpool_embedded_internal_free_block_t ) ) size = sizeof( strpool_embedded_internal_free_block_t );
     if( size < pool->min_data_size ) size = pool->min_data_size;
     size = (int)strpool_embedded_internal_pow2ceil( (STRPOOL_EMBEDDED_U32)size );
-    
+
     // Try to find a large enough free slot in existing blocks
     for( int i = 0; i < pool->block_count; ++i )
         {
@@ -871,20 +935,20 @@ static char* strpool_embedded_internal_get_data_storage( strpool_embedded_t* poo
         int prev_list = -1;
         while( free_list >= 0 )
             {
-            strpool_embedded_internal_free_block_t* free_entry = 
+            strpool_embedded_internal_free_block_t* free_entry =
                 (strpool_embedded_internal_free_block_t*) ( pool->blocks[ i ].data + free_list );
-            if( free_entry->size / 2 < size ) 
+            if( free_entry->size / 2 < size )
                 {
                 // At this point, all remaining slots are too small, so bail out if the current slot is not large enough
-                if( free_entry->size < size ) break; 
+                if( free_entry->size < size ) break;
 
                 if( prev_list < 0 )
                     {
-                    pool->blocks[ i ].free_list = free_entry->next;         
+                    pool->blocks[ i ].free_list = free_entry->next;
                     }
                 else
                     {
-                    strpool_embedded_internal_free_block_t* prev_entry = 
+                    strpool_embedded_internal_free_block_t* prev_entry =
                         (strpool_embedded_internal_free_block_t*) ( pool->blocks[ i ].data + prev_list );
                     prev_entry->next = free_entry->next;
                     }
@@ -913,7 +977,7 @@ static char* strpool_embedded_internal_get_data_storage( strpool_embedded_t* poo
     *alloc_size = size;
     return data;
     }
-    
+
 
 STRPOOL_EMBEDDED_U64 strpool_embedded_inject( strpool_embedded_t* pool, char const* string, int length )
     {
@@ -921,7 +985,7 @@ STRPOOL_EMBEDDED_U64 strpool_embedded_inject( strpool_embedded_t* pool, char con
 
     STRPOOL_EMBEDDED_U32 hash = strpool_embedded_internal_find_in_blocks( pool, string, length );
     // If no stored hash, calculate it from data
-    if( !hash ) hash = strpool_embedded_internal_calculate_hash( string, length, pool->ignore_case ); 
+    if( !hash ) hash = strpool_embedded_internal_calculate_hash( string, length, pool->ignore_case );
 
     // Return handle to existing string, if it is already in pool
     int base_slot = (int)( hash & (STRPOOL_EMBEDDED_U32)( pool->hash_capacity - 1 ) );
@@ -933,7 +997,7 @@ STRPOOL_EMBEDDED_U64 strpool_embedded_inject( strpool_embedded_t* pool, char con
         STRPOOL_EMBEDDED_U32 slot_hash = pool->hash_table[ slot ].hash_key;
         if( slot_hash == 0 && pool->hash_table[ first_free ].hash_key != 0 ) first_free = slot;
         int slot_base = (int)( slot_hash & (STRPOOL_EMBEDDED_U32)( pool->hash_capacity - 1 ) );
-        if( slot_base == base_slot ) 
+        if( slot_base == base_slot )
             {
             STRPOOL_EMBEDDED_ASSERT( base_count > 0 );
             --base_count;
@@ -941,21 +1005,21 @@ STRPOOL_EMBEDDED_U64 strpool_embedded_inject( strpool_embedded_t* pool, char con
                 {
                 int index = pool->hash_table[ slot ].entry_index;
                 strpool_embedded_internal_entry_t* entry = &pool->entries[ index ];
-                if( entry->length == length && 
-                    ( 
+                if( entry->length == length &&
+                    (
                        ( !pool->ignore_case &&   STRPOOL_EMBEDDED_MEMCMP( entry->data + 2 * sizeof( STRPOOL_EMBEDDED_U32 ), string, (size_t)length ) == 0 )
-                    || (  pool->ignore_case && STRPOOL_EMBEDDED_STRNICMP( entry->data + 2 * sizeof( STRPOOL_EMBEDDED_U32 ), string, (size_t)length ) == 0 ) 
-                    ) 
+                    || (  pool->ignore_case && STRPOOL_EMBEDDED_STRNICMP( entry->data + 2 * sizeof( STRPOOL_EMBEDDED_U32 ), string, (size_t)length ) == 0 )
+                    )
                   )
                     {
                     int handle_index = entry->handle_index;
-                    return strpool_embedded_internal_make_handle( handle_index, pool->handles[ handle_index ].counter, 
+                    return strpool_embedded_internal_make_handle( handle_index, pool->handles[ handle_index ].counter,
                         pool->index_mask, pool->counter_shift, pool->counter_mask );
                     }
                 }
             }
         slot = ( slot + 1 ) & ( pool->hash_capacity - 1 );
-        }   
+        }
 
     // This is a new string, so let's add it
 
@@ -973,9 +1037,9 @@ STRPOOL_EMBEDDED_U64 strpool_embedded_inject( strpool_embedded_t* pool, char con
             int slot_base = (int)( slot_hash & (STRPOOL_EMBEDDED_U32)( pool->hash_capacity - 1 ) );
             if( slot_base == base_slot )  --base_count;
             slot = ( slot + 1 ) & ( pool->hash_capacity - 1 );
-            }       
+            }
         }
-        
+
     slot = first_free;
     while( pool->hash_table[ slot ].hash_key )
         slot = ( slot + 1 ) & ( pool->hash_capacity - 1 );
@@ -995,28 +1059,28 @@ STRPOOL_EMBEDDED_U64 strpool_embedded_inject( strpool_embedded_t* pool, char con
         {
         handle_index = pool->handle_count;
         pool->handles[ pool->handle_count ].counter = 1;
-        ++pool->handle_count;           
+        ++pool->handle_count;
         }
     else if( pool->handle_freelist_head >= 0 )
         {
         handle_index = pool->handle_freelist_head;
-        if( pool->handle_freelist_tail == pool->handle_freelist_head ) 
+        if( pool->handle_freelist_tail == pool->handle_freelist_head )
             pool->handle_freelist_tail = pool->handles[ pool->handle_freelist_head ].entry_index;
-        pool->handle_freelist_head = pool->handles[ pool->handle_freelist_head ].entry_index;                       
+        pool->handle_freelist_head = pool->handles[ pool->handle_freelist_head ].entry_index;
         }
     else
         {
         strpool_embedded_internal_expand_handles( pool );
         handle_index = pool->handle_count;
         pool->handles[ pool->handle_count ].counter = 1;
-        ++pool->handle_count;           
+        ++pool->handle_count;
         }
 
     pool->handles[ handle_index ].entry_index = pool->entry_count;
-        
+
     strpool_embedded_internal_entry_t* entry = &pool->entries[ pool->entry_count ];
     ++pool->entry_count;
-        
+
     int data_size = length + 1 + (int) ( 2 * sizeof( STRPOOL_EMBEDDED_U32 ) );
     char* data = strpool_embedded_internal_get_data_storage( pool, data_size, &data_size );
     entry->hash_slot = slot;
@@ -1030,10 +1094,10 @@ STRPOOL_EMBEDDED_U64 strpool_embedded_inject( strpool_embedded_t* pool, char con
     data += sizeof( STRPOOL_EMBEDDED_U32 );
     *(STRPOOL_EMBEDDED_U32*)(data) = (STRPOOL_EMBEDDED_U32) length;
     data += sizeof( STRPOOL_EMBEDDED_U32 );
-    STRPOOL_EMBEDDED_MEMCPY( data, string, (size_t) length ); 
+    STRPOOL_EMBEDDED_MEMCPY( data, string, (size_t) length );
     data[ length ] = 0; // Ensure trailing zero
 
-    return strpool_embedded_internal_make_handle( handle_index, pool->handles[ handle_index ].counter, pool->index_mask, 
+    return strpool_embedded_internal_make_handle( handle_index, pool->handles[ handle_index ].counter, pool->index_mask,
         pool->counter_shift, pool->counter_mask );
     }
 
@@ -1055,7 +1119,7 @@ revision history:
     1.3     fixed typo in mask bit shift
     1.2     made it possible to override standard library functions
     1.1     added is_valid function to query a handles validity
-    1.0     first released version  
+    1.0     first released version
 */
 
 
@@ -1070,22 +1134,22 @@ ALTERNATIVE A - MIT License
 
 Copyright (c) 2015 Mattias Gustavsson
 
-Permission is hereby granted, free of charge, to any person obtaining a copy of 
-this software and associated documentation files (the "Software"), to deal in 
-the Software without restriction, including without limitation the rights to 
-use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies 
-of the Software, and to permit persons to whom the Software is furnished to do 
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
 so, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all 
+The above copyright notice and this permission notice shall be included in all
 copies or substantial portions of the Software.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, 
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE 
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
@@ -1094,22 +1158,22 @@ ALTERNATIVE B - Public Domain (www.unlicense.org)
 
 This is free and unencumbered software released into the public domain.
 
-Anyone is free to copy, modify, publish, use, compile, sell, or distribute this 
-software, either in source code form or as a compiled binary, for any purpose, 
+Anyone is free to copy, modify, publish, use, compile, sell, or distribute this
+software, either in source code form or as a compiled binary, for any purpose,
 commercial or non-commercial, and by any means.
 
-In jurisdictions that recognize copyright laws, the author or authors of this 
-software dedicate any and all copyright interest in the software to the public 
-domain. We make this dedication for the benefit of the public at large and to 
-the detriment of our heirs and successors. We intend this dedication to be an 
-overt act of relinquishment in perpetuity of all present and future rights to 
+In jurisdictions that recognize copyright laws, the author or authors of this
+software dedicate any and all copyright interest in the software to the public
+domain. We make this dedication for the benefit of the public at large and to
+the detriment of our heirs and successors. We intend this dedication to be an
+overt act of relinquishment in perpetuity of all present and future rights to
 this software under copyright law.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
-AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN 
-ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION 
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
@@ -1121,7 +1185,7 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 #if !defined(CUTE_TILED_WARNING)
 	#define CUTE_TILED_DEFAULT_WARNING
-	#define CUTE_TILED_WARNING cute_tiled_warning
+	#define CUTE_TILED_WARNING(msg) cute_tiled_warning(msg, __LINE__)
 #endif
 
 #if !defined(CUTE_TILED_MEMCPY)
@@ -1142,14 +1206,32 @@ WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 	#endif
 #endif
 
-const char* cute_tiled_error_reason;
+#if !defined(CUTE_TILED_STDIO)
+	#include <stdio.h>  // snprintf, fopen, fclose, etc.
+	#define CUTE_TILED_SNPRINTF snprintf
+	#define CUTE_TILED_SEEK_SET SEEK_SET
+	#define CUTE_TILED_SEEK_END SEEK_END
+	#define CUTE_TILED_FILE FILE
+	#define CUTE_TILED_FOPEN fopen
+	#define CUTE_TILED_FSEEK fseek
+	#define CUTE_TILED_FREAD fread
+	#define CUTE_TILED_FTELL ftell
+	#define CUTE_TILED_FCLOSE fclose
+#endif
+
+int cute_tiled_error_cline; 			// The line in cute_tiled.h where the error was triggered.
+const char* cute_tiled_error_reason; 		// The error message.
+int cute_tiled_error_line;  			// The line where the error happened in the json.
+const char* cute_tiled_error_file = NULL; 	// The filepath of the file being parsed. NULL if from memory.
 
 #ifdef CUTE_TILED_DEFAULT_WARNING
 	#include <stdio.h>
 
-	void cute_tiled_warning(const char* warning)
+	void cute_tiled_warning(const char* warning, int line)
 	{
-		printf("WARNING (cute_tiled): %s\n", warning);
+		cute_tiled_error_cline = line;
+		const char *error_file = cute_tiled_error_file ? cute_tiled_error_file : "MEMORY";
+		printf("WARNING (cute_tiled.h:%i): %s (%s:%i)\n", cute_tiled_error_cline, warning, error_file, cute_tiled_error_line);
 	}
 #endif
 
@@ -1190,6 +1272,7 @@ void* cute_tiled_alloc(cute_tiled_map_internal_t* m, int size)
 		page->next = m->pages;
 		page->data = page + 1;
 		m->pages = page;
+		m->bytes_left_on_page = m->page_size;
 	}
 
 	void* data = ((char*)m->pages->data) + (m->page_size - m->bytes_left_on_page);
@@ -1216,18 +1299,18 @@ static char* cute_tiled_read_file_to_memory_and_null_terminate(const char* path,
 {
 	CUTE_TILED_UNUSED(mem_ctx);
 	char* data = 0;
-	FILE* fp = fopen(path, "rb");
+	CUTE_TILED_FILE* fp = CUTE_TILED_FOPEN(path, "rb");
 	int sz = 0;
 
 	if (fp)
 	{
-		fseek(fp, 0, SEEK_END);
-		sz = ftell(fp);
-		fseek(fp, 0, SEEK_SET);
+		CUTE_TILED_FSEEK(fp, 0, CUTE_TILED_SEEK_END);
+		sz = CUTE_TILED_FTELL(fp);
+		CUTE_TILED_FSEEK(fp, 0, CUTE_TILED_SEEK_SET);
 		data = (char*)CUTE_TILED_ALLOC(sz + 1, mem_ctx);
-		fread(data, sz, 1, fp);
+		CUTE_TILED_FREAD(data, sz, 1, fp);
 		data[sz] = 0;
-		fclose(fp);
+		CUTE_TILED_FCLOSE(fp);
 	}
 
 	if (size) *size = sz;
@@ -1236,19 +1319,26 @@ static char* cute_tiled_read_file_to_memory_and_null_terminate(const char* path,
 
 cute_tiled_map_t* cute_tiled_load_map_from_file(const char* path, void* mem_ctx)
 {
+	cute_tiled_error_file = path;
+
 	int size;
 	void* file = cute_tiled_read_file_to_memory_and_null_terminate(path, &size, mem_ctx);
-	if (!file) CUTE_TILED_WARNING("unable to find map file.");
+	if (!file) CUTE_TILED_WARNING("Unable to find map file.");
 	cute_tiled_map_t* map = cute_tiled_load_map_from_memory(file, size, mem_ctx);
 	CUTE_TILED_FREE(file, mem_ctx);
+
+	cute_tiled_error_file = NULL;
+
 	return map;
 }
 
-#define CUTE_TILED_CHECK(X, Y) do { if (!(X)) { cute_tiled_error_reason = Y; goto cute_tiled_err; } } while (0)
+#define CUTE_TILED_CHECK(X, Y) do { if (!(X)) { cute_tiled_error_reason = Y; cute_tiled_error_cline = __LINE__; goto cute_tiled_err; } } while (0)
 #define CUTE_TILED_FAIL_IF(X) do { if (X) { goto cute_tiled_err; } } while (0)
 
 static int cute_tiled_isspace(char c)
 {
+	cute_tiled_error_line += c == '\n';
+
 	return (c == ' ') |
 		(c == '\t') |
 		(c == '\n') |
@@ -1263,17 +1353,23 @@ static char cute_tiled_peak(cute_tiled_map_internal_t* m)
 	return *m->in;
 }
 
+#ifdef __clang__
+    #define CUTE_TILED_CRASH() __builtin_trap()
+#else
+    #define CUTE_TILED_CRASH() *(int*)0 = 0
+#endif
+
 static char cute_tiled_next(cute_tiled_map_internal_t* m)
 {
 	char c;
-	if (m->in == m->end) *(int*)0 = 0;
+	if (m->in == m->end) CUTE_TILED_CRASH();
 	while (cute_tiled_isspace(c = *m->in++));
 	return c;
 }
 
 static int cute_tiled_try(cute_tiled_map_internal_t* m, char expect)
 {
-	if (m->in == m->end) *(int*)0 = 0;
+	if (m->in == m->end) CUTE_TILED_CRASH();
 	if (cute_tiled_peak(m) == expect)
 	{
 		m->in++;
@@ -1284,7 +1380,9 @@ static int cute_tiled_try(cute_tiled_map_internal_t* m, char expect)
 
 #define cute_tiled_expect(m, expect) \
 	do { \
-		CUTE_TILED_CHECK(cute_tiled_next(m) == expect, "Found unexpected token (is this a valid JSON file?)."); \
+		static char error[128]; \
+		CUTE_TILED_SNPRINTF(error, sizeof(error), "Found unexpected token '%c', expected '%c' (is this a valid JSON file?).", *m->in, expect); \
+		CUTE_TILED_CHECK(cute_tiled_next(m) == (expect), error); \
 	} while (0)
 
 char cute_tiled_parse_char(char c)
@@ -1302,6 +1400,79 @@ char cute_tiled_parse_char(char c)
 		default: return c;
 	}
 }
+
+static int cute_tiled_skip_object_internal(cute_tiled_map_internal_t* m)
+{
+	int depth = 1;
+	cute_tiled_expect(m, '{');
+
+	while (depth) {
+		CUTE_TILED_CHECK(m->in <= m->end, "Attempted to read passed input buffer (is this a valid JSON file?).");
+
+		char c = cute_tiled_next(m);
+
+		switch(c)
+		{
+		case '{':
+			depth += 1;
+			break;
+
+		case '}':
+			depth -= 1;
+			break;
+
+		default:
+			break;
+		}
+	}
+
+	return 1;
+
+cute_tiled_err:
+	return 0;
+}
+
+#define cute_tiled_skip_object(m) \
+	do { \
+		CUTE_TILED_FAIL_IF(!cute_tiled_skip_object_internal(m)); \
+	} while (0)
+
+static int cute_tiled_skip_array_internal(cute_tiled_map_internal_t* m)
+{
+	int depth = 1;
+	cute_tiled_expect(m, '[');
+
+	while (depth)
+	{
+		CUTE_TILED_CHECK(m->in <= m->end, "Attempted to read passed input buffer (is this a valid JSON file?).");
+
+		char c = cute_tiled_next(m);
+
+		switch(c)
+		{
+		case '[':
+			depth += 1;
+			break;
+
+		case ']':
+			depth -= 1;
+			break;
+
+		default:
+			break;
+		}
+	}
+
+	return 1;
+
+cute_tiled_err:
+	return 0;
+}
+
+#define cute_tiled_skip_array(m) \
+	do { \
+		CUTE_TILED_FAIL_IF(!cute_tiled_skip_array_internal(m)); \
+	} while (0)
 
 static int cute_tiled_read_string_internal(cute_tiled_map_internal_t* m)
 {
@@ -1349,6 +1520,7 @@ static int cute_tiled_read_int_internal(cute_tiled_map_internal_t* m, int* out)
 {
 	char* end;
 	int val = (int)strtoll(m->in, &end, 10);
+	if (*end == '.') strtod(m->in, &end); // If we're reading a float as an int, then just skip the decimal part.
 	CUTE_TILED_CHECK(m->in != end, "Invalid integer found during parse.");
 	m->in = end;
 	*out = val;
@@ -1380,11 +1552,11 @@ static int cute_tiled_read_hex_int_internal(cute_tiled_map_internal_t* m, int* o
 	}
 
 	char* end;
-	int val;
-	val = strtol(m->in, &end, 16);
+	unsigned long long int val;
+	val = strtoull(m->in, &end, 16);
 	CUTE_TILED_CHECK(m->in != end, "Invalid integer found during parse.");
 	m->in = end;
-	*out = val;
+	*out = (int)val;
 	return 1;
 
 cute_tiled_err:
@@ -1527,7 +1699,7 @@ int cute_tiled_read_vertex_array_internal(cute_tiled_map_internal_t* m, int* out
 		cute_tiled_read_float(m, swap ? &y : &x);
 		cute_tiled_expect(m, ',');
 		cute_tiled_expect(m, '"');
-		cute_tiled_expect(m, swap ? 'y' : 'x');
+		cute_tiled_expect(m, swap ? 'x' : 'y');
 		cute_tiled_expect(m, '"');
 		cute_tiled_expect(m, ':');
 		cute_tiled_read_float(m, swap ? &x : &y);
@@ -1565,7 +1737,10 @@ cute_tiled_err:
 
 int cute_tiled_skip_until_after_internal(cute_tiled_map_internal_t* m, char c)
 {
-	while (*m->in != c) m->in++;
+	while (*m->in != c) {
+		cute_tiled_error_line += *m->in == '\n';
+		m->in++;
+	}
 	cute_tiled_expect(m, c);
 	return 1;
 
@@ -1597,8 +1772,10 @@ int cute_tiled_read_properties_internal(cute_tiled_map_internal_t* m, cute_tiled
 		cute_tiled_skip_until_after(m, ':');
 		cute_tiled_intern_string(m, &prop.name);
 
-		// Skip the property type. This is unnecessary information since we can deduce the property type while parsing.
+		// Read in the property type. The value type is deduced while parsing, this is only used for float because the JSON format omits decimals on round floats.
 		cute_tiled_skip_until_after(m, ':');
+		cute_tiled_expect(m, '"');
+		char type_char = cute_tiled_next(m);
 
 		// Skip extraneous JSON information and go find the actual value data.
 		cute_tiled_skip_until_after(m, ':');
@@ -1617,7 +1794,7 @@ int cute_tiled_read_properties_internal(cute_tiled_map_internal_t* m, cute_tiled
 			int is_hex_color = 1;
 
 			if (*s++ != '#') is_hex_color = 0;
-			else 
+			else
 			{
 				while ((c = *s++) != '"')
 				{
@@ -1669,7 +1846,7 @@ int cute_tiled_read_properties_internal(cute_tiled_map_internal_t* m, cute_tiled
 				}
 			}
 
-			if (is_float)
+			if (is_float || type_char == 'f')
 			{
 				cute_tiled_read_float(m, &prop.data.floating);
 				prop.type = CUTE_TILED_PROPERTY_FLOAT;
@@ -1697,9 +1874,10 @@ int cute_tiled_read_properties_internal(cute_tiled_map_internal_t* m, cute_tiled
 	}
 
 	cute_tiled_expect(m, ']');
-	cute_tiled_expect(m, ',');
+	cute_tiled_try(m, ',');
 
-	*out_properties = props;
+	*out_properties = count ? props : NULL;
+        if (!count) CUTE_TILED_FREE(props, m->mem_ctx);
 	*out_count = count;
 
 	return 1;
@@ -1736,7 +1914,7 @@ cute_tiled_object_t* cute_tiled_read_object(cute_tiled_map_internal_t* m)
 			break;
 
 		case 809651598226485190U: // height
-			cute_tiled_read_int(m, &object->height);
+			cute_tiled_read_float(m, &object->height);
 			break;
 
 		case 3133932603199444032U: // id
@@ -1784,7 +1962,7 @@ cute_tiled_object_t* cute_tiled_read_object(cute_tiled_map_internal_t* m)
 			break;
 
 		case 7400839267610537869U: // width
-			cute_tiled_read_int(m, &object->width);
+			cute_tiled_read_float(m, &object->width);
 			break;
 
 		case 644252274336276709U: // x
@@ -1813,6 +1991,9 @@ cute_tiled_layer_t* cute_tiled_layers(cute_tiled_map_internal_t* m)
 {
 	cute_tiled_layer_t* layer = (cute_tiled_layer_t*)cute_tiled_alloc(m, sizeof(cute_tiled_layer_t));
 	CUTE_TILED_MEMSET(layer, 0, sizeof(cute_tiled_layer_t));
+	layer->parallaxx = 1.0f;
+	layer->parallaxy = 1.0f;
+
 	cute_tiled_expect(m, '{');
 
 	while (cute_tiled_peak(m) != '}')
@@ -1843,6 +2024,10 @@ cute_tiled_layer_t* cute_tiled_layers(cute_tiled_map_internal_t* m)
 
 		case 809651598226485190U: // height
 			cute_tiled_read_int(m, &layer->height);
+			break;
+
+		case 13522647194774232494U: // image
+			cute_tiled_intern_string(m, &layer->image);
 			break;
 
 		case 4566956252693479661U: // layers
@@ -1879,6 +2064,14 @@ cute_tiled_layer_t* cute_tiled_layers(cute_tiled_map_internal_t* m)
 			cute_tiled_expect(m, ']');
 			break;
 
+		case 5195853646368960386U: // offsetx
+			cute_tiled_read_float(m, &layer->offsetx);
+			break;
+
+		case 5196810221485314731U: // offsety
+			cute_tiled_read_float(m, &layer->offsety);
+			break;
+
 		case 11746902372727406098U: // opacity
 			cute_tiled_read_float(m, &layer->opacity);
 			break;
@@ -1913,6 +2106,14 @@ cute_tiled_layer_t* cute_tiled_layers(cute_tiled_map_internal_t* m)
 			cute_tiled_read_int(m, &layer->y);
 			break;
 
+		case 18212633776084966362U: // parallaxx
+			cute_tiled_read_float(m, &layer->parallaxx);
+			break;
+
+		case 18213590351201320707U: // parallaxy
+			cute_tiled_read_float(m, &layer->parallaxy);
+			break;
+
 		case 3133932603199444032U: // id
 			cute_tiled_read_int(m, &layer->id);
 		break;
@@ -1931,15 +2132,62 @@ cute_tiled_err:
 	return 0;
 }
 
+int cute_tiled_read_animation_frames_internal(cute_tiled_map_internal_t* m, cute_tiled_frame_t** out_frames, int* out_count)
+{
+	int count = 0;
+	int capacity = 32;
+	cute_tiled_frame_t* frames = (cute_tiled_frame_t*)CUTE_TILED_ALLOC(capacity * sizeof(cute_tiled_frame_t), m->mem_ctx);
+
+	cute_tiled_expect(m, '[');
+
+	while (cute_tiled_peak(m) != ']')
+	{
+		cute_tiled_expect(m, '{');
+
+		cute_tiled_frame_t frame;
+
+		// Read in the duration and tileid.
+		cute_tiled_skip_until_after(m, ':');
+		cute_tiled_read_int(m, &frame.duration);
+		cute_tiled_expect(m, ',');
+		cute_tiled_skip_until_after(m, ':');
+		cute_tiled_read_int(m, &frame.tileid);
+
+		if (count == capacity)
+		{
+			capacity *= 2;
+			cute_tiled_frame_t* new_frames = (cute_tiled_frame_t*)CUTE_TILED_ALLOC(capacity * sizeof(cute_tiled_frame_t), m->mem_ctx);
+			CUTE_TILED_MEMCPY(new_frames, frames, sizeof(cute_tiled_frame_t) * count);
+			CUTE_TILED_FREE(frames, m->mem_ctx);
+			frames = new_frames;
+		}
+		frames[count++] = frame;
+
+		cute_tiled_expect(m, '}');
+		cute_tiled_try(m, ',');
+	}
+
+	cute_tiled_expect(m, ']');
+	cute_tiled_try(m, ',');
+
+	*out_frames = frames;
+	*out_count = count;
+
+	return 1;
+
+cute_tiled_err:
+	return 0;
+}
+
+#define cute_tiled_read_animation_frames(m, out_frames, out_count) \
+	do { \
+		CUTE_TILED_FAIL_IF(!cute_tiled_read_animation_frames_internal(m, out_frames, out_count)); \
+	} while (0)
+
 cute_tiled_tile_descriptor_t* cute_tiled_read_tile_descriptor(cute_tiled_map_internal_t* m)
 {
 	cute_tiled_tile_descriptor_t* tile_descriptor = (cute_tiled_tile_descriptor_t*)cute_tiled_alloc(m, sizeof(cute_tiled_tile_descriptor_t));
 	CUTE_TILED_MEMSET(tile_descriptor, 0, sizeof(cute_tiled_tile_descriptor_t));
-
-	cute_tiled_expect(m, '"');
-	cute_tiled_read_int(m, &tile_descriptor->tile_index);
-	cute_tiled_expect(m, '"');
-	cute_tiled_expect(m, ':');
 
 	cute_tiled_expect(m, '{');
 	while (cute_tiled_peak(m) != '}')
@@ -1950,6 +2198,26 @@ cute_tiled_tile_descriptor_t* cute_tiled_read_tile_descriptor(cute_tiled_map_int
 
 		switch (h)
 		{
+		case 3133932603199444032U: // id
+			cute_tiled_read_int(m, &tile_descriptor->tile_index);
+			break;
+
+		case 13509284784451838071U: // type
+			cute_tiled_intern_string(m, &tile_descriptor->type);
+			break;
+
+		case 13522647194774232494U: // image
+			cute_tiled_intern_string(m, &tile_descriptor->image);
+			break;
+
+		case 7796197983149768626U: // imagewidth
+			cute_tiled_read_int(m, &tile_descriptor->imagewidth);
+			break;
+
+		case 2114495263010514843U: // imageheight
+			cute_tiled_read_int(m, &tile_descriptor->imageheight);
+			break;
+
 		case 8368542207491637236U: // properties
 			cute_tiled_read_properties(m, &tile_descriptor->properties, &tile_descriptor->property_count);
 			break;
@@ -1966,12 +2234,19 @@ cute_tiled_tile_descriptor_t* cute_tiled_read_tile_descriptor(cute_tiled_map_int
 			cute_tiled_read_float(m, &tile_descriptor->probability);
 			break;
 
+		case 2784044778313316778U: // terrain: used by tiled editor only
+			cute_tiled_skip_array(m);
+			break;
+
+		case 3115399308714904519U: // animation
+			cute_tiled_read_animation_frames(m, &tile_descriptor->animation, &tile_descriptor->frame_count);
+			break;
+
 		default:
 			CUTE_TILED_CHECK(0, "Unknown identifier found.");
 		}
 
 		cute_tiled_try(m, ',');
-
 	}
 
 	cute_tiled_expect(m, '}');
@@ -1980,6 +2255,48 @@ cute_tiled_tile_descriptor_t* cute_tiled_read_tile_descriptor(cute_tiled_map_int
 cute_tiled_err:
 	return 0;
 }
+
+int cute_tiled_read_point_internal(cute_tiled_map_internal_t* m, int* point_x, int* point_y)
+{
+	*point_x = 0;
+	*point_y = 0;
+
+	cute_tiled_expect(m, '{');
+	while (cute_tiled_peak(m) != '}')
+	{
+		cute_tiled_read_string(m);
+		cute_tiled_expect(m, ':');
+		CUTE_TILED_U64 h = cute_tiled_FNV1a(m->scratch, m->scratch_len + 1);
+
+		switch (h)
+		{
+		case 644252274336276709U: // x
+			cute_tiled_read_int(m, point_x);
+			break;
+
+		case 643295699219922364U: // y
+			cute_tiled_read_int(m, point_y);
+			break;
+
+		default:
+			CUTE_TILED_CHECK(0, "Unknown identifier found.");
+		}
+
+		cute_tiled_try(m, ',');
+	}
+
+	cute_tiled_expect(m, '}');
+
+	return 1;
+
+cute_tiled_err:
+	return 0;
+}
+
+#define cute_tiled_read_point(m, x, y) \
+	do { \
+		CUTE_TILED_FAIL_IF(!cute_tiled_read_point_internal(m, x, y)); \
+	} while (0)
 
 static CUTE_TILED_INLINE int cute_tiled_skip_curly_braces_internal(cute_tiled_map_internal_t* m)
 {
@@ -2012,12 +2329,26 @@ cute_tiled_tileset_t* cute_tiled_tileset(cute_tiled_map_internal_t* m)
 
 		switch (h)
 		{
+		case 17465100621023921744U: // backgroundcolor
+			cute_tiled_expect(m, '"');
+			cute_tiled_read_hex_int(m, &tileset->backgroundcolor);
+			cute_tiled_expect(m, '"');
+			break;
+
 		case 12570673734542705940U: // columns
 			cute_tiled_read_int(m, &tileset->columns);
 			break;
 
+		case 13648382824248632287U: // editorsettings
+			cute_tiled_skip_object(m);
+			break;
+
 		case 13956389100366699181U: // firstgid
 			cute_tiled_read_int(m, &tileset->firstgid);
+			break;
+
+		case 16920059161811221315U: // grid: unsupported
+			cute_tiled_skip_object(m);
 			break;
 
 		case 13522647194774232494U: // image
@@ -2040,6 +2371,14 @@ cute_tiled_tileset_t* cute_tiled_tileset(cute_tiled_map_internal_t* m)
 			cute_tiled_intern_string(m, &tileset->name);
 			break;
 
+		case 1007832939408977147U: // tiledversion
+			cute_tiled_intern_string(m, &tileset->tiledversion);
+			break;
+
+		case 8196820454517111669U: // version
+			cute_tiled_read_float(m, &tileset->version);
+			break;
+
 		case 8368542207491637236U: // properties
 			cute_tiled_read_properties(m, &tileset->properties, &tileset->property_count);
 			break;
@@ -2056,13 +2395,17 @@ cute_tiled_tileset_t* cute_tiled_tileset(cute_tiled_map_internal_t* m)
 			cute_tiled_read_int(m, &tileset->tileheight);
 			break;
 
+		case 2769630600247906626U: // tileoffset
+			cute_tiled_read_point(m, &tileset->tileoffset_x, &tileset->tileoffset_y);
+			break;
+
 		case 7277156227374254384U: // tileproperties
-			CUTE_TILED_WARNING("`tileproperties` is not currently supported. Attempting to skip.");
+			CUTE_TILED_WARNING("`tileproperties` is deprecated. Attempting to skip.");
 			CUTE_TILED_FAIL_IF(cute_tiled_skip_curly_braces_internal(m));
 			break;
 
 		case 15569462518706435895U: // tilepropertytypes
-			CUTE_TILED_WARNING("`tilepropertytypes` is not currently supported. Attempting to skip.");
+			CUTE_TILED_WARNING("`tilepropertytypes` is deprecated. Attempting to skip.");
 			CUTE_TILED_FAIL_IF(cute_tiled_skip_curly_braces_internal(m));
 			break;
 
@@ -2082,12 +2425,19 @@ cute_tiled_tileset_t* cute_tiled_tileset(cute_tiled_map_internal_t* m)
 
 		case 8053780534892277672U: // source
 			cute_tiled_intern_string(m, &tileset->source);
+#ifndef CUTE_TILED_NO_EXTERNAL_TILESET_WARNING
+			CUTE_TILED_WARNING("You might have forgotten to embed your tileset -- Most fields of `cute_tiled_tileset_t` will be zero'd out (unset).");
+#endif /* CUTE_TILED_NO_EXTERNAL_TILESET_WARNING */
+			break;
+
+		case 1819203229U: // objectalignment
+			cute_tiled_intern_string(m, &tileset->objectalignment);
 			break;
 
 		case 104417158474046698U: // tiles
 		{
-			cute_tiled_expect(m, '{');
-			while (cute_tiled_peak(m) != '}')
+			cute_tiled_expect(m, '[');
+			while (cute_tiled_peak(m) != ']')
 			{
 				cute_tiled_tile_descriptor_t* tile_descriptor = cute_tiled_read_tile_descriptor(m);
 				CUTE_TILED_FAIL_IF(!tile_descriptor);
@@ -2095,8 +2445,16 @@ cute_tiled_tileset_t* cute_tiled_tileset(cute_tiled_map_internal_t* m)
 				tileset->tiles = tile_descriptor;
 				cute_tiled_try(m, ',');
 			}
-			cute_tiled_expect(m, '}');
+			cute_tiled_expect(m, ']');
 		}	break;
+
+		case 14766449174202642533U: // terrains: used by tiled editor only
+			cute_tiled_skip_array(m);
+			break;
+
+		case 6029584663444593209U: // wangsets: used by tiled editor only
+			cute_tiled_skip_array(m);
+			break;
 
 		default:
 			CUTE_TILED_CHECK(0, "Unknown identifier found.");
@@ -2119,12 +2477,23 @@ static int cute_tiled_dispatch_map_internal(cute_tiled_map_internal_t* m)
 	cute_tiled_expect(m, ':');
 	h = cute_tiled_FNV1a(m->scratch, m->scratch_len + 1);
 
- 	switch (h)
+	switch (h)
 	{
 	case 17465100621023921744U: // backgroundcolor
 		cute_tiled_expect(m, '"');
 		cute_tiled_read_hex_int(m, &m->map.backgroundcolor);
 		cute_tiled_expect(m, '"');
+		break;
+
+	case 5549108793316760247U: // compressionlevel
+	{
+		int compressionlevel;
+		cute_tiled_read_int(m, &compressionlevel);
+		CUTE_TILED_CHECK(compressionlevel == -1 || compressionlevel == 0, "Compression is not yet supported.");
+	}	break;
+
+	case 13648382824248632287U: // editorsettings
+		cute_tiled_skip_object(m);
 		break;
 
 	case 809651598226485190U: // height
@@ -2199,7 +2568,11 @@ static int cute_tiled_dispatch_map_internal(cute_tiled_map_internal_t* m)
 		break;
 
 	case 8196820454517111669U: // version
+		if (*m->in == '"')
+			m->in++;
 		cute_tiled_read_float(m, &m->map.version);
+		if (*m->in == '"')
+			m->in++;
 		break;
 
 	case 7400839267610537869U: // width
@@ -2208,7 +2581,7 @@ static int cute_tiled_dispatch_map_internal(cute_tiled_map_internal_t* m)
 
 	case 2498445529143042872U: // nextlayerid
 		cute_tiled_read_int(m, &m->map.nextlayerid);
-	break;
+		break;
 
 	default:
 		CUTE_TILED_CHECK(0, "Unknown identifier found.");
@@ -2225,7 +2598,7 @@ cute_tiled_err:
 		CUTE_TILED_FAIL_IF(!cute_tiled_dispatch_map_internal(m)); \
 	} while (0)
 
-static CUTE_TILED_INLINE void cute_tiled_string_deintern(cute_tiled_map_internal_t* m, cute_tiled_string_t* s)
+static CUTE_TILED_INLINE void cute_tiled_deintern_string(cute_tiled_map_internal_t* m, cute_tiled_string_t* s)
 {
 	s->ptr = strpool_embedded_cstr(&m->strpool, s->hash_id);
 }
@@ -2235,8 +2608,8 @@ static void cute_tiled_deintern_properties(cute_tiled_map_internal_t* m, cute_ti
 	for (int i = 0; i < property_count; ++i)
 	{
 		cute_tiled_property_t* p = properties + i;
-		cute_tiled_string_deintern(m, &p->name);
-		if (p->type == CUTE_TILED_PROPERTY_STRING) cute_tiled_string_deintern(m, &p->data.string);
+		cute_tiled_deintern_string(m, &p->name);
+		if (p->type == CUTE_TILED_PROPERTY_STRING) cute_tiled_deintern_string(m, &p->data.string);
 	}
 }
 
@@ -2244,16 +2617,17 @@ static void cute_tiled_deintern_layer(cute_tiled_map_internal_t* m, cute_tiled_l
 {
 	while (layer)
 	{
-		cute_tiled_string_deintern(m, &layer->draworder);
-		cute_tiled_string_deintern(m, &layer->name);
-		cute_tiled_string_deintern(m, &layer->type);
+		cute_tiled_deintern_string(m, &layer->draworder);
+		cute_tiled_deintern_string(m, &layer->name);
+		cute_tiled_deintern_string(m, &layer->type);
+		cute_tiled_deintern_string(m, &layer->image);
 		cute_tiled_deintern_properties(m, layer->properties, layer->property_count);
 
 		cute_tiled_object_t* object = layer->objects;
 		while (object)
 		{
-			cute_tiled_string_deintern(m, &object->name);
-			cute_tiled_string_deintern(m, &object->type);
+			cute_tiled_deintern_string(m, &object->name);
+			cute_tiled_deintern_string(m, &object->type);
 			cute_tiled_deintern_properties(m, object->properties, object->property_count);
 			object = object->next;
 		}
@@ -2264,28 +2638,37 @@ static void cute_tiled_deintern_layer(cute_tiled_map_internal_t* m, cute_tiled_l
 	}
 }
 
+static void cute_tiled_patch_tileset_strings(cute_tiled_map_internal_t* m, cute_tiled_tileset_t* tileset)
+{
+	cute_tiled_deintern_string(m, &tileset->image);
+	cute_tiled_deintern_string(m, &tileset->name);
+	cute_tiled_deintern_string(m, &tileset->type);
+	cute_tiled_deintern_string(m, &tileset->source);
+	cute_tiled_deintern_string(m, &tileset->tiledversion);
+	cute_tiled_deintern_string(m, &tileset->objectalignment);
+	cute_tiled_deintern_properties(m, tileset->properties, tileset->property_count);
+	cute_tiled_tile_descriptor_t* tile_descriptor = tileset->tiles;
+	while (tile_descriptor)
+	{
+		cute_tiled_deintern_string(m, &tile_descriptor->image);
+		cute_tiled_deintern_string(m, &tile_descriptor->type);
+		cute_tiled_deintern_properties(m, tile_descriptor->properties, tile_descriptor->property_count);
+		tile_descriptor = tile_descriptor->next;
+	}
+}
+
 static void cute_tiled_patch_interned_strings(cute_tiled_map_internal_t* m)
 {
-	cute_tiled_string_deintern(m, &m->map.orientation);
-	cute_tiled_string_deintern(m, &m->map.renderorder);
-	cute_tiled_string_deintern(m, &m->map.tiledversion);
-	cute_tiled_string_deintern(m, &m->map.type);
+	cute_tiled_deintern_string(m, &m->map.orientation);
+	cute_tiled_deintern_string(m, &m->map.renderorder);
+	cute_tiled_deintern_string(m, &m->map.tiledversion);
+	cute_tiled_deintern_string(m, &m->map.type);
 	cute_tiled_deintern_properties(m, m->map.properties, m->map.property_count);
 
 	cute_tiled_tileset_t* tileset = m->map.tilesets;
 	while (tileset)
 	{
-		cute_tiled_string_deintern(m, &tileset->image);
-		cute_tiled_string_deintern(m, &tileset->name);
-		cute_tiled_string_deintern(m, &tileset->type);
-		cute_tiled_string_deintern(m, &tileset->source);
-		cute_tiled_deintern_properties(m, tileset->properties, tileset->property_count);
-		cute_tiled_tile_descriptor_t* tile_descriptor = tileset->tiles;
-		while (tile_descriptor)
-		{
-			cute_tiled_deintern_properties(m, tile_descriptor->properties, tile_descriptor->property_count);
-			tile_descriptor = tile_descriptor->next;
-		}
+		cute_tiled_patch_tileset_strings(m, tileset);
 		tileset = tileset->next;
 	}
 
@@ -2334,6 +2717,7 @@ static void cute_tiled_free_map_internal(cute_tiled_map_internal_t* m)
 		while (desc)
 		{
 			if (desc->properties) CUTE_TILED_FREE(desc->properties, m->mem_ctx);
+			if (desc->animation) CUTE_TILED_FREE(desc->animation, mem_ctx);
 			cute_tiled_free_layers(desc->objectgroup, m->mem_ctx);
 			desc = desc->next;
 		}
@@ -2372,7 +2756,7 @@ void cute_tiled_reverse_layers(cute_tiled_map_t* map)
 	CUTE_TILED_REVERSE_LIST(cute_tiled_layer_t, map->layers);
 }
 
-cute_tiled_map_t* cute_tiled_load_map_from_memory(const void* memory, int size_in_bytes, void* mem_ctx)
+static cute_tiled_map_internal_t* cute_tiled_map_internal_alloc_internal(void* memory, int size_in_bytes, void* mem_ctx)
 {
 	cute_tiled_map_internal_t* m = (cute_tiled_map_internal_t*)CUTE_TILED_ALLOC(sizeof(cute_tiled_map_internal_t), mem_ctx);
 	CUTE_TILED_MEMSET(m, 0, sizeof(cute_tiled_map_internal_t));
@@ -2387,7 +2771,14 @@ cute_tiled_map_t* cute_tiled_load_map_from_memory(const void* memory, int size_i
 	strpool_embedded_config_t config = strpool_embedded_default_config;
 	config.memctx = mem_ctx;
 	strpool_embedded_init(&m->strpool, &config);
+	return m;
+}
 
+cute_tiled_map_t* cute_tiled_load_map_from_memory(const void* memory, int size_in_bytes, void* mem_ctx)
+{
+	cute_tiled_error_line = 1;
+
+	cute_tiled_map_internal_t* m = cute_tiled_map_internal_alloc_internal((void*)memory, size_in_bytes, mem_ctx);
 	cute_tiled_layer_t* layer = m->map.layers;
 	cute_tiled_tileset_t* tileset = m->map.tilesets;
 	cute_tiled_expect(m, '{');
@@ -2427,6 +2818,37 @@ void cute_tiled_free_map(cute_tiled_map_t* map)
 	cute_tiled_free_map_internal(m);
 }
 
+cute_tiled_tileset_t* cute_tiled_load_external_tileset(const char* path, void* mem_ctx)
+{
+	cute_tiled_error_file = path;
+
+	int size;
+	void* file = cute_tiled_read_file_to_memory_and_null_terminate(path, &size, mem_ctx);
+	if (!file) CUTE_TILED_WARNING("Unable to find external tileset file.");
+	cute_tiled_tileset_t* tileset = cute_tiled_load_external_tileset_from_memory(file, size, mem_ctx);
+	CUTE_TILED_FREE(file, mem_ctx);
+
+	cute_tiled_error_file = NULL;
+
+	return tileset;
+}
+
+cute_tiled_tileset_t* cute_tiled_load_external_tileset_from_memory(const void* memory, int size_in_bytes, void* mem_ctx)
+{
+	cute_tiled_map_internal_t* m = cute_tiled_map_internal_alloc_internal((void*)memory, size_in_bytes, mem_ctx);
+	cute_tiled_tileset_t* tileset = cute_tiled_tileset(m);
+	cute_tiled_patch_tileset_strings(m, tileset);
+	CUTE_TILED_REVERSE_LIST(cute_tiled_tile_descriptor_t, tileset->tiles);
+	tileset->_internal = m;
+	return tileset;
+}
+
+void cute_tiled_free_external_tileset(cute_tiled_tileset_t* tileset)
+{
+	cute_tiled_map_internal_t* m = (cute_tiled_map_internal_t*)tileset->_internal;
+	cute_tiled_free_map_internal(m);
+}
+
 #endif // CUTE_TILED_IMPLEMENTATION_ONCE
 #endif // CUTE_TILED_IMPLEMENTATION
 
@@ -2452,20 +2874,20 @@ void cute_tiled_free_map(cute_tiled_map_t* map)
 	------------------------------------------------------------------------------
 	ALTERNATIVE B - Public Domain (www.unlicense.org)
 	This is free and unencumbered software released into the public domain.
-	Anyone is free to copy, modify, publish, use, compile, sell, or distribute this 
-	software, either in source code form or as a compiled binary, for any purpose, 
+	Anyone is free to copy, modify, publish, use, compile, sell, or distribute this
+	software, either in source code form or as a compiled binary, for any purpose,
 	commercial or non-commercial, and by any means.
-	In jurisdictions that recognize copyright laws, the author or authors of this 
-	software dedicate any and all copyright interest in the software to the public 
-	domain. We make this dedication for the benefit of the public at large and to 
-	the detriment of our heirs and successors. We intend this dedication to be an 
-	overt act of relinquishment in perpetuity of all present and future rights to 
+	In jurisdictions that recognize copyright laws, the author or authors of this
+	software dedicate any and all copyright interest in the software to the public
+	domain. We make this dedication for the benefit of the public at large and to
+	the detriment of our heirs and successors. We intend this dedication to be an
+	overt act of relinquishment in perpetuity of all present and future rights to
 	this software under copyright law.
-	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR 
-	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
-	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE 
-	AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN 
-	ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION 
+	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+	AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+	ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 	WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 	------------------------------------------------------------------------------
 */

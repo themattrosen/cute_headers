@@ -151,7 +151,7 @@ cute_thread_id_t cute_thread_id();
  * is considered a leak to leave an thread hanging around (even if it finished execution
  * and returned).
  */
-int cute_thread_wait(cute_thread_t thread);
+int cute_thread_wait(cute_thread_t* thread);
 
 /**
  * Returns the number of CPU cores on the machine. Can be affected my machine dependent technology,
@@ -319,15 +319,25 @@ struct cute_rw_lock_t
 #if defined(CUTE_SYNC_SDL)
 #elif defined(CUTE_SYNC_WINDOWS)
 	#define WIN32_LEAN_AND_MEAN
+	// To use GetThreadId and other methods we must require Windows Vista minimum.
+	#if _WIN32_WINNT < 0x0600
+		#undef _WIN32_WINNT
+		#define _WIN32_WINNT 0x0600 // requires Windows Vista minimum
+		// 0x0400=Windows NT 4.0, 0x0500=Windows 2000, 0x0501=Windows XP, 0x0502=Windows Server 2003, 0x0600=Windows Vista,
+		// 0x0601=Windows 7, 0x0602=Windows 8, 0x0603=Windows 8.1, 0x0A00=Windows 10
+	#endif
 	#include <Windows.h>
 #elif defined(CUTE_SYNC_POSIX)
-	#error CUTE_SYNC_POSIX is not yet implemented.
 	#include <pthread.h>
 	#include <semaphore.h>
 
 	// Just platforms with unistd.h are supported for now.
 	// So no FreeBSD, OS/2, or other weird platforms.
 	#include <unistd.h> // sysconf
+
+	#if defined(__APPLE__)
+	#include <sys/sysctl.h> // sysctlbyname
+	#endif
 #else
 	#error Please choose a base implementation between CUTE_SYNC_SDL, CUTE_SYNC_WINDOWS and CUTE_SYNC_POSIX.
 #endif
@@ -341,15 +351,6 @@ struct cute_rw_lock_t
 #if !defined(CUTE_SYNC_MEMCPY)
 	#include <string.h>
 	#define CUTE_SYNC_MEMCPY memcpy
-#endif
-
-#if !defined(CUTE_SYNC_ALIGN)
-	#ifdef _MSC_VER
-		#define CUTE_SYNC_ALIGN(X) __declspec(align(X))
-	#else
-		#define CUTE_SYNC_ALIGN(X) __attribute__((aligned(X)))
-	#endif
-	// Add your own platform here.
 #endif
 
 #if !defined(CUTE_SYNC_YIELD)
@@ -511,22 +512,22 @@ cute_mutex_t cute_mutex_create()
 
 int cute_lock(cute_mutex_t* mutex)
 {
-	return !SDL_LockMutex((SDL_mutex*)mutex);
+	return !SDL_LockMutex((SDL_mutex*)mutex->align);
 }
 
 int cute_unlock(cute_mutex_t* mutex)
 {
-	return !SDL_UnlockMutex((SDL_mutex*)mutex);
+	return !SDL_UnlockMutex((SDL_mutex*)mutex->align);
 }
 
 int cute_trylock(cute_mutex_t* mutex)
 {
-	return !SDL_TryLockMutex((SDL_mutex*)mutex);
+	return !SDL_TryLockMutex((SDL_mutex*)mutex->align);
 }
 
 void cute_mutex_destroy(cute_mutex_t* mutex)
 {
-	SDL_DestroyMutex((SDL_mutex*)mutex);
+	SDL_DestroyMutex((SDL_mutex*)mutex->align);
 }
 
 cute_cv_t cute_cv_create()
@@ -538,22 +539,22 @@ cute_cv_t cute_cv_create()
 
 int cute_cv_wake_all(cute_cv_t* cv)
 {
-	return !SDL_CondBroadcast((SDL_cond*)cv);
+	return !SDL_CondBroadcast((SDL_cond*)cv->align);
 }
 
 int cute_cv_wake_one(cute_cv_t* cv)
 {
-	return !SDL_CondSignal((SDL_cond*)cv);
+	return !SDL_CondSignal((SDL_cond*)cv->align);
 }
 
 int cute_cv_wait(cute_cv_t* cv, cute_mutex_t* mutex)
 {
-	return !SDL_CondWait((SDL_cond*)cv, (SDL_mutex*)mutex);
+	return !SDL_CondWait((SDL_cond*)cv, (SDL_mutex*)mutex->align);
 }
 
 void cute_cv_destroy(cute_cv_t* cv)
 {
-	SDL_DestroyCond((SDL_cond*)cv);
+	SDL_DestroyCond((SDL_cond*)cv->align);
 }
 
 cute_semaphore_t cute_semaphore_create(int initial_count)
@@ -571,22 +572,22 @@ int cute_semaphore_post(cute_semaphore_t* semaphore)
 
 int cute_semaphore_try(cute_semaphore_t* semaphore)
 {
-	return !SDL_SemTryWait((SDL_sem*)semaphore);
+	return !SDL_SemTryWait((SDL_sem*)semaphore->id);
 }
 
 int cute_semaphore_wait(cute_semaphore_t* semaphore)
 {
-	return !SDL_SemWait((SDL_sem*)semaphore);
+	return !SDL_SemWait((SDL_sem*)semaphore->id);
 }
 
 int cute_semaphore_value(cute_semaphore_t* semaphore)
 {
-	return SDL_SemValue((SDL_sem*)semaphore);
+	return SDL_SemValue((SDL_sem*)semaphore->id);
 }
 
 void cute_semaphore_destroy(cute_semaphore_t* semaphore)
 {
-	SDL_DestroySemaphore((SDL_sem*)semaphore);
+	SDL_DestroySemaphore((SDL_sem*)semaphore->id);
 }
 
 cute_thread_t* cute_thread_create(cute_thread_fn func, const char* name, void* udata)
@@ -818,7 +819,7 @@ cute_mutex_t cute_mutex_create()
 {
 	CUTE_SYNC_ASSERT(sizeof(pthread_mutex_t) <= sizeof(cute_mutex_t));
 	cute_mutex_t mutex;
-	pthread_mutex_t((pthread_mutex_t*)&mutex, NULL);
+	pthread_mutex_init((pthread_mutex_t*)&mutex, NULL);
 	return mutex;
 }
 
@@ -848,7 +849,7 @@ cute_cv_t cute_cv_create()
 {
 	CUTE_SYNC_ASSERT(sizeof(pthread_cond_t) <= sizeof(cute_cv_t));
 	cute_cv_t cv;
-	pthread_cond_init((pthread_cond_t*)&cv);
+	pthread_cond_init((pthread_cond_t*)&cv, NULL);
 	return cv;
 }
 
@@ -873,6 +874,8 @@ void cute_cv_destroy(cute_cv_t* cv)
 {
 	pthread_cond_destroy((pthread_cond_t*)cv);
 }
+
+#if !defined(__APPLE__)
 
 cute_semaphore_t cute_semaphore_create(int initial_count)
 {
@@ -909,11 +912,107 @@ void cute_semaphore_destroy(cute_semaphore_t* semaphore)
 	sem_destroy((sem_t*)semaphore->id);
 }
 
+#elif defined(__APPLE__)
+
+// Because Apple sucks and deprecated posix semaphores we must make our own...
+
+typedef struct cute_apple_sem_t
+{
+	int count;
+	int waiting_count;
+	cute_mutex_t lock;
+	cute_cv_t cv;
+} cute_apple_sem_t;
+
+cute_semaphore_t cute_semaphore_create(int initial_count)
+{
+	cute_apple_sem_t* apple_sem = (cute_apple_sem_t*)CUTE_SYNC_ALLOC(sizeof(cute_apple_sem_t), NULL);
+	apple_sem->count = initial_count;
+	apple_sem->waiting_count = 0;
+	apple_sem->lock = cute_mutex_create();
+	apple_sem->cv = cute_cv_create();
+	cute_semaphore_t semaphore;
+	semaphore.id = (void*)apple_sem;
+	semaphore.count.i = initial_count;
+	return semaphore;
+}
+
+int cute_semaphore_post(cute_semaphore_t* semaphore)
+{
+	cute_apple_sem_t* apple_sem = (cute_apple_sem_t*)semaphore->id;
+	cute_lock(&apple_sem->lock);
+	if (apple_sem->waiting_count > 0) {
+		cute_cv_wake_one(&apple_sem->cv);
+	}
+	apple_sem->count += 1;
+	cute_unlock(&apple_sem->lock);
+	return 1;
+}
+
+int cute_semaphore_try(cute_semaphore_t* semaphore)
+{
+	cute_apple_sem_t* apple_sem = (cute_apple_sem_t*)semaphore->id;
+	int result = 0;
+	cute_lock(&apple_sem->lock);
+	if (apple_sem->count > 0) {
+		apple_sem->count -= 1;
+		result = 1;
+	}
+	cute_unlock(&apple_sem->lock);
+	return result;
+}
+
+int cute_semaphore_wait(cute_semaphore_t* semaphore)
+{
+	cute_apple_sem_t* apple_sem = (cute_apple_sem_t*)semaphore->id;
+	int result = 1;
+	cute_lock(&apple_sem->lock);
+	while (apple_sem->count == 0 && result) {
+		result = cute_cv_wait(&apple_sem->cv, &apple_sem->lock);
+	}
+	apple_sem->waiting_count -= 1;
+	if (result) {
+		apple_sem->count -= 1;
+	}
+	cute_unlock(&apple_sem->lock);
+	return result;
+}
+
+int cute_semaphore_value(cute_semaphore_t* semaphore)
+{
+	cute_apple_sem_t* apple_sem = (cute_apple_sem_t*)semaphore->id;
+	int value;
+	cute_lock(&apple_sem->lock);
+	value = apple_sem->count;
+	cute_unlock(&apple_sem->lock);
+	return value;
+}
+
+void cute_semaphore_destroy(cute_semaphore_t* semaphore)
+{
+	cute_apple_sem_t* apple_sem = (cute_apple_sem_t*)semaphore->id;
+	while (apple_sem->waiting_count > 0) {
+		cute_cv_wake_all(&apple_sem->cv);
+		CUTE_SYNC_YIELD();
+	}
+	cute_cv_destroy(&apple_sem->cv);
+	cute_lock(&apple_sem->lock);
+	cute_unlock(&apple_sem->lock);
+	cute_mutex_destroy(&apple_sem->lock);
+	CUTE_SYNC_FREE(apple_sem, NULL);
+}
+
+#endif
+
 cute_thread_t* cute_thread_create(cute_thread_fn fn, const char* name, void* udata)
 {
 	pthread_t thread;
 	pthread_create(&thread, NULL, (void* (*)(void*))fn, udata);
+#if !defined(__APPLE__)
 	if (name) pthread_setname_np(thread, name);
+#else
+	(void)name;
+#endif
 	return (cute_thread_t*)thread;
 }
 
@@ -945,12 +1044,19 @@ int cute_core_count()
 
 int cute_cacheline_size()
 {
+#if defined(__APPLE__)
+	size_t sz;
+	size_t szsz = sizeof(sz);
+	sysctlbyname("hw.cachelinesize", &sz, &szsz, 0, 0);
+	return (int)sz;
+#else
 	return (int)sysconf(_SC_LEVEL1_DCACHE_LINESIZE);
+#endif
 }
 
 int cute_ram_size()
 {
-	(int)((Sint64)sysconf(_SC_PHYS_PAGES) * sysconf(_SC_PAGESIZE) / (1024*1024));
+	return (int)(sysconf(_SC_PHYS_PAGES) * sysconf(_SC_PAGESIZE) / (1024*1024));
 }
 
 #else
@@ -1029,6 +1135,7 @@ void cute_rw_lock_destroy(cute_rw_lock_t* rw)
 
 static void* cute_malloc_aligned(size_t size, int alignment, void* mem_ctx)
 {
+	(void)mem_ctx;
 	int is_power_of_2 = alignment && !(alignment & (alignment - 1));
 	CUTE_SYNC_ASSERT(is_power_of_2);
 	void* p = CUTE_SYNC_ALLOC(size + alignment, mem_ctx);
@@ -1041,6 +1148,7 @@ static void* cute_malloc_aligned(size_t size, int alignment, void* mem_ctx)
 
 static void cute_free_aligned(void* p, void* mem_ctx)
 {
+	(void)mem_ctx;
 	if (!p) return;
 	size_t alignment = (size_t)*((char*)p - 1) & 0xFF;
 	CUTE_SYNC_FREE((char*)p - alignment, mem_ctx);
@@ -1052,11 +1160,6 @@ typedef struct cute_task_t
 	void* param;
 } cute_task_t;
 
-typedef struct CUTE_SYNC_ALIGN(CUTE_SYNC_CACHELINE_SIZE) cute_aligned_thread_t
-{
-	cute_thread_t* thread;
-} cute_aligned_thread_t;
-
 typedef struct cute_threadpool_t
 {
 	int task_capacity;
@@ -1065,9 +1168,9 @@ typedef struct cute_threadpool_t
 	cute_mutex_t task_mutex;
 
 	int thread_count;
-	cute_aligned_thread_t* threads;
+	cute_thread_t** threads;
 
-	int running;
+	cute_atomic_int_t running;
 	cute_mutex_t sem_mutex;
 	cute_semaphore_t semaphore;
 	void* mem_ctx;
@@ -1090,7 +1193,7 @@ int cute_try_pop_task_internal(cute_threadpool_t* pool, cute_task_t* task)
 int cute_worker_thread_internal(void* udata)
 {
 	cute_threadpool_t* pool = (cute_threadpool_t*)udata;
-	while (pool->running) {
+	while (cute_atomic_get(&pool->running)) {
 		cute_task_t task;
 		if (cute_try_pop_task_internal(pool, &task)) {
 			task.do_work(task.param);
@@ -1111,14 +1214,14 @@ cute_threadpool_t* cute_threadpool_create(int thread_count, void* mem_ctx)
 	pool->tasks = (cute_task_t*)cute_malloc_aligned(sizeof(cute_task_t) * pool->task_capacity, CUTE_SYNC_CACHELINE_SIZE, mem_ctx);
 	pool->task_mutex = cute_mutex_create();
 	pool->thread_count = thread_count;
-	pool->threads = (cute_aligned_thread_t*)cute_malloc_aligned(sizeof(cute_aligned_thread_t) * thread_count, CUTE_SYNC_CACHELINE_SIZE, mem_ctx);
-	pool->running = 1;
+	pool->threads = (cute_thread_t**)cute_malloc_aligned(sizeof(cute_thread_t*) * thread_count, CUTE_SYNC_CACHELINE_SIZE, mem_ctx);
+	cute_atomic_set(&pool->running, 1);
 	pool->sem_mutex = cute_mutex_create();
 	pool->semaphore = cute_semaphore_create(0);
 	pool->mem_ctx = mem_ctx;
 
 	for (int i = 0; i < thread_count; ++i) {
-		pool->threads[i].thread = cute_thread_create(cute_worker_thread_internal, 0, pool);
+		pool->threads[i] = cute_thread_create(cute_worker_thread_internal, 0, pool);
 	}
 
 	return pool;
@@ -1171,19 +1274,20 @@ void cute_threadpool_kick(cute_threadpool_t* pool)
 
 void cute_threadpool_destroy(cute_threadpool_t* pool)
 {
-	pool->running = 0;
+	cute_atomic_set(&pool->running, 0);
 
 	for (int i = 0; i < pool->thread_count; ++i) {
 		cute_semaphore_post(&pool->semaphore);
 	}
 
 	for (int i = 0; i < pool->thread_count; ++i) {
-		cute_thread_wait(pool->threads[i].thread);
+		cute_thread_wait(pool->threads[i]);
 	}
 
 	cute_free_aligned(pool->tasks, pool->mem_ctx);
 	cute_free_aligned(pool->threads, pool->mem_ctx);
 	void* mem_ctx = pool->mem_ctx;
+	(void)mem_ctx;
 	CUTE_SYNC_FREE(pool, mem_ctx);
 }
 

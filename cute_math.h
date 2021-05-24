@@ -59,20 +59,27 @@
 #define CUTE_MATH_FLT_MAX 3.402823466e+38F
 #define CUTE_MATH_FLT_EPSILON 1.19209290E-07f
 
+namespace cute {
+
 // -------------------------------------------------------------------------------------------------
 // Scalar operations.
+
+#ifndef CUTE_MATH_SCALAR_OPS
+#define CUTE_MATH_SCALAR_OPS
 
 CUTE_MATH_INLINE float min(float a, float b) { return a < b ? a : b; }
 CUTE_MATH_INLINE float max(float a, float b) { return b < a ? a : b; }
 CUTE_MATH_INLINE float clamp(float a, float lo, float hi) { return max(lo, min(a, hi)); }
 CUTE_MATH_INLINE float sign(float a) { return a < 0 ? -1.0f : 1.0f; }
 CUTE_MATH_INLINE float intersect(float da, float db) { return da / (da - db); }
-CUTE_MATH_INLINE float invert_safe(float a) { return a != 0 ? a / 1.0f : 0; }
+CUTE_MATH_INLINE float invert_safe(float a) { return a != 0 ? 1.0f / a : 0; }
 
 CUTE_MATH_INLINE int min(int a, int b) { return a < b ? a : b; }
 CUTE_MATH_INLINE int max(int a, int b) { return b < a ? a : b; }
 CUTE_MATH_INLINE int clamp(int a, int lo, int hi) { return max(lo, min(a, hi)); }
 CUTE_MATH_INLINE int sign(int a) { return a < 0 ? -1 : 1; }
+
+#endif // CUTE_MATH_SCALAR_OPS
 
 // -------------------------------------------------------------------------------------------------
 // 3-Vector definition.
@@ -190,7 +197,7 @@ struct cute_math_const_float
 {
 	union { float f[4]; __m128 m; };
 	CUTE_MATH_INLINE operator v3() const { return v3(m); }
-	CUTE_MATH_INLINE operator __m128() const { m; }
+	CUTE_MATH_INLINE operator __m128() const { return m; }
 };
 
 CUTE_MATH_SELECTANY cute_math_const_integer cute_math_mask_sign = { 0x80000000, 0x80000000, 0x80000000, 0x80000000 };
@@ -713,6 +720,8 @@ void CUTE_MATH_CALL mul_vector4_by_matrix4x4(float* a_matrix4x4, float* b_vector
 void CUTE_MATH_CALL mul_matrix4x4_by_matrix4x4(float* a, float* b, float* out);
 void CUTE_MATH_CALL compute_mouse_ray(float mouse_x, float mouse_y, float fov, float viewport_w, float viewport_h, float* cam_inv, float near_plane_dist, v3* mouse_pos, v3* mouse_dir);
 void CUTE_MATH_CALL axis_angle_from_m3(m3 m, v3* axis, float* angle_radians);
+	
+} // namespace cute
 
 #define CUTE_MATH_H
 #endif
@@ -720,6 +729,8 @@ void CUTE_MATH_CALL axis_angle_from_m3(m3 m, v3* axis, float* angle_radians);
 #ifdef CUTE_MATH_IMPLEMENTATION
 #ifndef CUTE_MATH_IMPLEMENTATION_ONCE
 #define CUTE_MATH_IMPLEMENTATION_ONCE
+
+namespace cute {
 
 void CUTE_MATH_CALL look_at(float* world_to_cam, v3 eye, v3 target, v3 up, float* cam_to_world)
 {
@@ -811,7 +822,7 @@ void CUTE_MATH_CALL compute_mouse_ray(float mouse_x, float mouse_y, float fov, f
 
 	v3 cam_pos(cam_inv[12], cam_inv[13], cam_inv[14]);
 	float pf[4] = { getx(point_in_view_space), gety(point_in_view_space), getz(point_in_view_space), 1.0f };
-	mul_matrix4x4_by_matrix4x4(cam_inv, pf, pf);
+	mul_vector4_by_matrix4x4(cam_inv, pf, pf);
 	v3 point_on_clipping_plane(pf[0] , pf[1], pf[2]);
 	v3 dir_in_world_space = point_on_clipping_plane - cam_pos;
 
@@ -854,6 +865,8 @@ void CUTE_MATH_CALL axis_angle_from_m3(m3 m, v3* axis, float* angle_radians)
 		*axis = v3(v[0], v[1], v[2]);
 	}
 }
+	
+} // namespace cute
 
 #endif // CUTE_MATH_IMPLEMENTATION_ONCE
 #endif // CUTE_MATH_IMPLEMENTATION

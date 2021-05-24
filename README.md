@@ -2,31 +2,27 @@
 
 Various single-file cross-platform C/C++ headers implementing self-contained libraries.
 
-| library | description | latest version| language(s) 
+| library | description | latest version| language(s)
 |---------|-------------|---------------|-------------
-**[cute_c2](cute_c2.h)** | 2D collision detection routines on primitives, boolean results and/or manifold generation, shape cast/sweep test, raycasts | 1.08 | C/C++
-**[cute_coroutine](cute_coroutine.h)** | Implementation of Duff's device for cooperative style programming - useful for state machines and "linear" style coding | 1.0 | C/C++
-**[cute_sound](cute_sound.h)** | Load/play/loop/pitch (with plugin)/pan WAV + OGG (stb_vorbis wrapper for OGG) in mono/stereo, high performance custom mixer, decent performance custom pitch shifter (does not stretch time, done via plugin, see [cute_sound_pitch_plugin](cute_sound_pitch_plugin.h)) | 1.10 | C/C++
+**[cute_c2](cute_c2.h)** | 2D collision detection routines on primitives, boolean results and/or manifold generation, shape cast/sweep test, raycasts | 1.09 | C/C++
+**[cute_tiled](cute_tiled.h)** | Very efficient loader for Tiled maps exported to JSON format | 1.06 | C/C++
+**[cute_aseprite](cute_aseprite.h)** | Parses .ase/.aseprite files into a compact and convenient struct collection | 1.01 | C/C++
+**[cute_coroutine](cute_coroutine.h)** | Implementation of Duff's device for cooperative style programming - useful for state machines and "linear" style coding | 1.01 | C/C++
+**[cute_sound](cute_sound.h)** | Load/play/loop/pitch (with plugin)/pan WAV + OGG (stb_vorbis wrapper for OGG) in mono/stereo, high performance custom mixer, decent performance custom pitch shifter (does not stretch time, done via plugin, see [cute_sound_pitch_plugin](cute_sound_pitch_plugin.h)) | 1.11 | C/C++
 **[cute_time](cute_time.h)** | Quick and dirty "main loop" timer function, along with utilities for integer-based high resolution timing | 1.0 | C/C++
 **[cute_memfile](cute_memfile.h)** | Utility for calling fscanf-alike functions on files embedded in memory | 1.0 | C++
 **[cute_files](cute_files.h)** | Directory traversal, both recursive and manual | 1.0 | C/C++
-**[cute_sid](cute_sid.h)** | Compile time string hashing via preprocessing; turns strings into integers | 1.0 | C/C++
 **[cute_math](cute_math.h)** | Professional level 3D vector math via SSE intrinsics | 1.02 | C++
 **[cute_png](cute_png.h)** | load/save PNG, texture atlas compiler, DEFLATE compliant decompressor | 1.04 | C/C++
-**[cute_gl](cute_gl.h)** | OpenGL 3.2 wrapper with carefully designed API to foster fast iteration | 1.02 | C/C++
 **[cute_utf](cute_utf.h)** | utf-8 and utf-16 encoder/decoder | 1.0 | C/C++ | public domain
 **[cute_huff](cute_huff.h)** | minimal static huffman encoder/decoder (compression) | 1.0 | C/C++ | zlib
-**[cute_spheremesh](cute_spheremesh.h)** | Generates beautiful vertices (triangles) of a sphere | 1.0 | C/C++
 **[cute_path](cute_path.h)** | c-string utility functions for Shlwapi.h style path manipulation | 1.01 | C/C++
 **[cute_alloc](cute_alloc.h)** | straight-forward but useful allocator collection | 1.01 | C/C++
 **[cute_math2d](cute_math2d.h)** | 2d vector math and shape routines | 1.0 | C++
 **[cute_spritebatch](cute_spritebatch.h)** | Run-time 2d sprite batcher. Builds atlases on-the-fly in-memory. Useful to implement a sprite batcher for any purpose (like 2D games) for high-performance rendering, without the need to precompile texture atlases on-disk. | 1.02 | C/C++
-**[cute_tiled](cute_tiled.h)** | Very efficient loader for Tiled maps exported to JSON format | 1.03 | C/C++
 **[cute_filewatch](cute_filewatch.h)** | Directory watcher wrapping assetsys.h, for virtual file paths and zip mounting | 1.01 | C/C++
-**[cute_ani](cute_ani.h)** | lower level bits of frame based looping animations | 1.0 | C/C++
 **[cute_font](cute_font.h)** | Load font atlases, and fill vertex buffers for rasterized fonts, word wrapping, CPU-side clipping, kerning | 1.01 | C/C++
 **[cute_sync](cute_sync.h)** | Collection of practical synchronization primitives, including read/write lock and threadpool/task system | 1.01 | C/C++
-**[cute_serialize](cute_serialize.h)** | Binary serialization utility focused around building polymorphic routines. Don't-Repeat-Yourself (DRY) style for to/from disk, or to/from in-memory buffer. | 1.03 | C/C++
 
 How to Use
 ----------
@@ -52,8 +48,14 @@ FAQ
 
 Including these headers is like including a normal header. However, to define the implementation each header looks something like this:
 
-    #define LIBNAME_IMPLEMENTATION
-    #include "libname.h"
+```c
+// Do this ONCE in a .c/.cpp file
+#define LIBNAME_IMPLEMENTATION
+#include "libname.h"
+
+// Everywhere else, just include like a typical header
+#include "libname.h"
+```
 
 This will turn the file into a header + c file combo, one time. The point of this is: A) handling the header or sending it to people is easy, no zip files or anything just copy and paste a single file; B) build scripts are a pain in the ass, and these single-file libs can be integrated into any project without modifying a single build script.
 
@@ -72,3 +74,7 @@ Unfortunately writing a good header library is pretty hard, so just any random h
 > - *What is the license?*
 
 Each lib contains license info at the end of the file. There is a choice between public domain, and zlib.
+
+> - *I was looking for a header I've seen before, but it's missing. Where did it go?*
+
+Some of the unpopular or not so useful headers became deprecated, and [live here now](https://github.com/RandyGaul/cute_headers_deprecated).

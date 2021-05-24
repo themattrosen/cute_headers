@@ -100,17 +100,23 @@ struct aabb_t
 #include <cmath>
 
 // scalar ops
+
+#ifndef CUTE_MATH_SCALAR_OPS
+#define CUTE_MATH_SCALAR_OPS
+
 CUTE_MATH2D_INLINE float min(float a, float b) { return a < b ? a : b; }
 CUTE_MATH2D_INLINE float max(float a, float b) { return b < a ? a : b; }
 CUTE_MATH2D_INLINE float clamp(float a, float lo, float hi) { return max(lo, min(a, hi)); }
 CUTE_MATH2D_INLINE float sign(float a) { return a < 0 ? -1.0f : 1.0f; }
 CUTE_MATH2D_INLINE float intersect(float da, float db) { return da / (da - db); }
-CUTE_MATH2D_INLINE float invert_safe(float a) { return a != 0 ? a / 1.0f : 0; }
+CUTE_MATH2D_INLINE float invert_safe(float a) { return a != 0 ? 1.0f / a : 0; }
 
 CUTE_MATH2D_INLINE int min(int a, int b) { return a < b ? a : b; }
 CUTE_MATH2D_INLINE int max(int a, int b) { return b < a ? a : b; }
 CUTE_MATH2D_INLINE int clamp(int a, int lo, int hi) { return max(lo, min(a, hi)); }
 CUTE_MATH2D_INLINE int sign(int a) { return a < 0 ? -1 : 1; }
+
+#endif // CUTE_MATH_SCALAR_OPS
 
 // vector ops
 CUTE_MATH2D_INLINE v2 operator+(v2 a, v2 b) { return v2(a.x + b.x, a.y + b.y); }
@@ -254,7 +260,7 @@ CUTE_MATH2D_INLINE circle_t mul(transform_t tx, circle_t a) { circle_t b; b.p = 
 CUTE_MATH2D_INLINE v2 impact(ray_t r, float t) { return r.p + r.d * t; }
 CUTE_MATH2D_INLINE v2 endpoint(ray_t r) { return r.p + r.d * r.t; }
 
-CUTE_MATH2D_INLINE int ray_to_halfpsace(ray_t A, halfspace_t B, raycast_t* out)
+CUTE_MATH2D_INLINE int ray_to_halfspace(ray_t A, halfspace_t B, raycast_t* out)
 {
 	float da = distance(B, A.p);
 	float db = distance(B, impact(A, A.t));
